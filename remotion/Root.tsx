@@ -12,11 +12,7 @@ export const RemotionRoot: React.FC = () => {
         height={1080}
         fps={30}
         durationInFrames={1200}
-        defaultProps={{
-          name: "Mariana",
-          // deixa vazio para cair no placeholder local
-          photoUrl: "",
-        }}
+        defaultProps={undefined}
       />
     </>
   );
