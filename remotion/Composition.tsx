@@ -147,11 +147,20 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
 
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
+// pode ficar no topo do arquivo Composition.tsx
+const SERVER_URL =
+  process.env.SERVER_URL ?? "https://remotion-railway-production.up.railway.app";
+
 export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
   // 🔒 Fallbacks seguros
   const safeName = (name ?? "").trim() || "Amigo(a)";
+
+  // Se vier photoUrl no body, usa ela.
+  // Se NÃO vier, usa a do public: /public/photo-placeholder.jpg
   const safePhotoUrl =
-    (photoUrl ?? "").trim() || "/photo-placeholder.jpg";
+    photoUrl && photoUrl.trim().length > 0
+      ? photoUrl
+      : `${SERVER_URL}/photo-placeholder.jpg`;
 
   return (
     <AbsoluteFill>
@@ -160,13 +169,12 @@ export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
 
       {/* parte em que a carta está em primeiro plano */}
       <Sequence
-  from={POV_LETTER_START}
-  durationInFrames={POV_LETTER_DURATION}
->
-  <NameOverlay name={safeName} />
-  <PhotoOnLetter photoUrl={safePhotoUrl} />
-</Sequence>
-
+        from={POV_LETTER_START}
+        durationInFrames={POV_LETTER_DURATION}
+      >
+        <NameOverlay name={safeName} />
+        <PhotoOnLetter photoUrl={safePhotoUrl} />
+      </Sequence>
     </AbsoluteFill>
   );
 };
