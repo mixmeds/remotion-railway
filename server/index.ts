@@ -1,58 +1,83 @@
 import express from "express";
-import { bundle } from "@remotion/bundler";
-import { renderMedia } from "@remotion/renderer";
 import path from "path";
 import fs from "fs";
+import { bundle } from "@remotion/bundler";
+import { getCompositions, renderMedia } from "@remotion/renderer";
 
 const app = express();
 app.use(express.json({ limit: "20mb" }));
 
-// ---- Pasta pública para acessar os vídeos ---- //
+// Diretório público para salvar e servir os vídeos
 const rendersDir = path.join(process.cwd(), "renders");
 if (!fs.existsSync(rendersDir)) {
   fs.mkdirSync(rendersDir, { recursive: true });
+  console.log("📁 Pasta 'renders' criada em:", rendersDir);
 }
 
-// ---- Servir os vídeos diretamente ---- //
+// Servir os arquivos gerados em /renders/...
 app.use("/renders", express.static(rendersDir));
 
+// Endpoint de render
 app.post("/render", async (req, res) => {
   try {
     console.log("🎬 Iniciando render...");
 
-    const entry = path.join(process.cwd(), "remotion", "index.ts");
+    const { name } = (req.body || {}) as { name?: string };
 
-    // 1) Gerar o bundle
+    const inputProps = {
+      name: name ?? "Teste rápido",
+    };
+
+    // 1) Entry do Remotion
+    const entry = path.resolve(process.cwd(), "remotion", "index.ts");
+
+    // 2) Gerar bundle
     console.log("📦 Gerando bundle...");
-    const bundlerOutput = await bundle({
+    const bundleLocation = await bundle({
       entryPoint: entry,
-      // IMPORTANTE: usar a porta 3000 pq remotion exige
-      port: 3000,
+      webpackOverride: (config) => config,
     });
+    console.log("📦 Bundle final:", bundleLocation);
 
-    // 2) Definir arquivo final na pasta pública
-    const fileName = `video-${Date.now()}.mp4`;
-    const finalOutput = path.join(rendersDir, fileName);
+    // 3) Buscar compositions e pegar a TestComp
+    const comps = await getCompositions(bundleLocation, { inputProps });
+    const compositionId = "TestComp";
+    const composition = comps.find((c) => c.id === compositionId);
 
-    // 3) Renderizar o vídeo
-    console.log("🎥 Renderizando vídeo...");
+    if (!composition) {
+      console.error(
+        "❌ Composition não encontrada. Disponíveis:",
+        comps.map((c) => c.id),
+      );
+
+      return res.status(400).json({
+        ok: false,
+        error: `Composition "${compositionId}" não encontrada. Comps disponíveis: ${comps
+          .map((c) => c.id)
+          .join(", ")}`,
+      });
+    }
+
+    // 4) Definir caminho de saída no diretório público
+    const fileName = `test-${Date.now()}.mp4`;
+    const outputLocation = path.join(rendersDir, fileName);
+
+    console.log("🎥 Renderizando vídeo em:", outputLocation);
+
+    // 5) Renderizar
     await renderMedia({
-      composition: {
-        id: "QuizVideo", // seu ID lá no RemotionRoot
-        width: 1920,
-        height: 1080,
-        fps: 30,
-        durationInFrames: 1830,
-      },
-      serveUrl: bundlerOutput,
+      composition,
+      serveUrl: bundleLocation,
       codec: "h264",
-      outputLocation: finalOutput,
+      outputLocation,
+      inputProps,
     });
 
     console.log("✅ Render finalizado!");
 
-    // 4) Retornar link acessível via HTTP
+    // 6) Retornar URL acessível
     const publicUrl = `/renders/${fileName}`;
+
     return res.json({
       ok: true,
       url: publicUrl,
@@ -61,12 +86,12 @@ app.post("/render", async (req, res) => {
     console.error("❌ Erro no /render:", err);
     return res.status(500).json({
       ok: false,
-      error: err.message,
+      error: err?.message ?? "Erro desconhecido ao renderizar",
     });
   }
 });
 
-// Porta do Railway (IMPORTANTE)
+// Porta do Railway
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 Server rodando na porta ${PORT}`);
