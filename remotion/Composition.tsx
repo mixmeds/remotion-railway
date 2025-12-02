@@ -1,26 +1,115 @@
 import React from "react";
 import {
   AbsoluteFill,
-  Video,
-  staticFile,
+  Img,
   Sequence,
+  Video,
+  interpolate,
+  spring,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
-  spring,
-  interpolate,
-  Img,
 } from "remotion";
-
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
 
 /* ------------ MAPA DE FRAMES ------------ */
 
-// POV da carta (onde entra o nome)
+// POV da carta (onde entra o nome/foto)
 const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
-/* ------------ NAME OVERLAY (TEXTO + MAGIA) ------------ */
+/* ------------ FOTO SOBRE A CARTA ------------ */
+
+const PhotoOnLetter: React.FC<{ src: string }> = ({ src }) => {
+  const texture = staticFile("ink-texture.webp");
+  const frame = useCurrentFrame();
+
+  // fade-in da foto
+  const fadeIn = interpolate(frame, [10, 30], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  // fade-out leve perto do fim da sequência
+  const fadeOut = interpolate(
+    frame,
+    [POV_LETTER_DURATION - 20, POV_LETTER_DURATION - 5],
+    [1, 0.85],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }
+  );
+
+  const opacity = fadeIn * fadeOut;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 260,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: 520,
+        height: 300,
+        pointerEvents: "none",
+        background: "transparent",
+        zIndex: 5,
+        opacity,
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          height: "100%",
+          overflow: "hidden",
+          borderRadius: 18,
+          backgroundColor: "#dec8a4",
+          boxShadow: "0 0 0 2px rgba(80, 50, 20, 0.25)",
+        }}
+      >
+        {/* FOTO DO USUÁRIO */}
+        <Img
+          src={src}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            mixBlendMode: "multiply",
+            filter: "sepia(0.4) contrast(0.95) saturate(0.9)",
+          }}
+        />
+
+        {/* textura do papel por cima da foto */}
+        <Img
+          src={texture}
+          style={{
+            position: "absolute",
+            inset: 0,
+            mixBlendMode: "multiply",
+            opacity: 0.55,
+            pointerEvents: "none",
+          }}
+        />
+
+        {/* vinheta leve */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background:
+              "radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.35) 100%)",
+            pointerEvents: "none",
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
+/* ------------ NOME SOBRE A CARTA ------------ */
 
 const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const frame = useCurrentFrame();
@@ -44,157 +133,55 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
     }
   );
 
-  const progress = interpolate(
-    anticipation,
-    [0, 1],
-    [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
+  const progress = interpolate(anticipation, [0, 1], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
-  const opacity = interpolate(
-    rawProgress,
-    [0, 0.04],
-    [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
+  const opacity = interpolate(rawProgress, [0, 0.04], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const safeName =
+    (name || "Amigo(a)").toUpperCase().slice(0, 20); // segurança extra
 
   return (
     <div
       style={{
         position: "absolute",
-        top: 260, // texto perto do topo da carta
+        top: 195, // um pouco acima da foto
         left: "50%",
         transform: "translateX(-50%)",
         pointerEvents: "none",
         background: "transparent",
-        zIndex: 10, // acima da foto
+        zIndex: 10,
         opacity,
       }}
     >
       <DistressedNameCanvas
-        text={name}
+        text={safeName}
         progress={progress}
-        width={900}
-        height={300}
-        fontSize={86}
-        textColor="#301b05"
-        glowColor="#f5e5b2"
-        roughness={0.5}
-        wobble={0.6}
-        inkBleed={0.9}
+        textureSrc={staticFile("ink-texture.webp")}
+        frame={frame}
+        fps={fps}
       />
     </div>
   );
 };
 
-/* ------------ FOTO NA CARTA ------------ */
+/* ------------ PROPS DA COMPOSIÇÃO ------------ */
 
-const PhotoOnLetter: React.FC<{ src: string }> = ({ src }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  // entra um pouquinho depois que o texto começa
-  const appear = spring({
-    frame: frame - 12,
-    fps,
-    config: { damping: 18, stiffness: 110, mass: 1.1 },
-    durationInFrames: 50,
-  });
-
-  const scale = interpolate(
-    appear,
-    [0, 0.7, 1],
-    [0.8, 1.04, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const rotate = interpolate(
-    appear,
-    [0, 1],
-    [-6, -3],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const y = interpolate(
-    appear,
-    [0, 1],
-    [40, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const texture = staticFile("paper-texture.jpg");
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: 290,
-        left: "50%",
-        transform: `translateX(-50%) translateY(${y}px) scale(${scale}) rotate(${rotate}deg)`,
-        width: 540,
-        height: 360,
-        boxShadow:
-          "0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.35)",
-        borderRadius: 18,
-        overflow: "hidden",
-        opacity: appear,
-        backgroundColor: "#2b1a0d",
-      }}
-    >
-      {/* foto */}
-      <div
-        style={{
-          position: "relative",
-          width: "100%",
-          height: "100%",
-        }}
-      >
-        <Img
-          src={src}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            mixBlendMode: "multiply",
-            filter: "sepia(0.5) contrast(0.95) saturate(0.9)",
-          }}
-        />
-
-        {/* textura do papel por cima da foto */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            backgroundImage: `url(${texture})`,
-            backgroundSize: "cover",
-            mixBlendMode: "soft-light",
-            opacity: 0.6,
-            pointerEvents: "none",
-          }}
-        />
-      </div>
-    </div>
-  );
+export type NoelCompProps = {
+  name?: string;
+  photoUrl?: string;
 };
 
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
-export const MyComp: React.FC<{ name: string }> = ({ name }) => {
+export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
+  const defaultPhoto = staticFile("photo-placeholder.jpg");
+
   return (
     <AbsoluteFill>
       {/* vídeo base com o POV da carta */}
@@ -205,9 +192,8 @@ export const MyComp: React.FC<{ name: string }> = ({ name }) => {
         from={POV_LETTER_START}
         durationInFrames={POV_LETTER_DURATION}
       >
-        <NameOverlay name={name} />
-        <PhotoOnLetter src={staticFile("photo-placeholder.jpg")} />
-        {/* depois você troca esse src pela foto dinâmica do usuário */}
+        <NameOverlay name={name ?? "Amigo(a)"} />
+        <PhotoOnLetter src={photoUrl || defaultPhoto} />
       </Sequence>
     </AbsoluteFill>
   );
