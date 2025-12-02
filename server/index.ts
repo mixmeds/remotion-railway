@@ -61,7 +61,7 @@ app.post("/render", async (req, res) => {
     const bundleLocation = await getOrCreateBundle();
 
     // 2) Busca a composition correta (id definido no Root.tsx)
-    const compositionId = "QuizVideo";
+    const compositionId = "noel";
     const comps = await getCompositions(bundleLocation, { inputProps });
 
     const composition = comps.find((c) => c.id === compositionId);
