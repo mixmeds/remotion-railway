@@ -10,17 +10,28 @@ dotenv.config();
 
 const { PORT = 3000, REMOTION_SERVE_URL } = process.env;
 
+// Estrutura simples em memória para acompanhar jobs
+type JobStatus = "queued" | "rendering" | "done" | "error";
+
+type Job = {
+  status: JobStatus;
+  filePath?: string;
+  errorMessage?: string;
+};
+
+const jobs: Record<string, Job> = {};
+
 async function main() {
   const app = express();
   app.use(express.json());
 
-  // Garante que a pasta de renders exista
+  // Pasta para salvar os renders dentro do container
   const rendersDir = path.resolve("renders");
   if (!fs.existsSync(rendersDir)) {
     fs.mkdirSync(rendersDir, { recursive: true });
   }
 
-  // Faz o bundle do projeto Remotion uma vez só na inicialização
+  // Bundle do projeto Remotion (uma vez por deploy)
   const remotionBundleUrl =
     REMOTION_SERVE_URL ??
     (await bundle({
@@ -32,13 +43,13 @@ async function main() {
 
   console.log("Remotion project bundled.");
 
-  // Rota de saúde só pra testar rápido
+  // Healthcheck
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
   });
 
   /**
-   * POST /render
+   * Cria um job de renderização ASSÍNCRONO
    * Body esperado (por enquanto tudo opcional):
    * {
    *   "name": "Marcos",
@@ -47,55 +58,88 @@ async function main() {
    * }
    */
   app.post("/render", async (req, res) => {
-    try {
-      const { name, photoUrl, audioUrl } = req.body ?? {};
+    const { name, photoUrl, audioUrl } = req.body ?? {};
 
-      // Por enquanto, se não mandar nada, usamos defaults só pra testar
-      const safeName = typeof name === "string" && name.trim() ? name.trim() : "Nome Custom";
-      const safePhotoUrl =
-        typeof photoUrl === "string" && photoUrl.trim()
-          ? photoUrl.trim()
-          : null; // se for null, a comp pode usar um placeholder interno
-      const safeAudioUrl =
-        typeof audioUrl === "string" && audioUrl.trim()
-          ? audioUrl.trim()
-          : null;
+    const safeName =
+      typeof name === "string" && name.trim() ? name.trim() : "Nome Custom";
 
-      const jobId = randomUUID();
-      const outputLocation = path.join(rendersDir, `${jobId}.mp4`);
+    const safePhotoUrl =
+      typeof photoUrl === "string" && photoUrl.trim()
+        ? photoUrl.trim()
+        : null;
 
-      console.log(`Iniciando render do vídeo. jobId=${jobId}`);
+    const safeAudioUrl =
+      typeof audioUrl === "string" && audioUrl.trim()
+        ? audioUrl.trim()
+        : null;
 
-      await renderMedia({
-        serveUrl: remotionBundleUrl,
-        composition: "TestComp", // id da composição no RemotionRoot
-        codec: "h264",
-        outputLocation,
-        inputProps: {
-          name: safeName,
-          photoUrl: safePhotoUrl,
-          audioUrl: safeAudioUrl,
-        },
-      });
+    const jobId = randomUUID();
+    const outputLocation = path.join(rendersDir, `${jobId}.mp4`);
 
-      console.log(`Render finalizado. Arquivo salvo em ${outputLocation}`);
+    // Marca como enfileirado
+    jobs[jobId] = {
+      status: "queued",
+    };
 
-      // Aqui ainda estamos só salvando localmente no container.
-      // Depois você pode subir isso para Supabase Storage / R2 e devolver a URL pública.
-      res.status(201).json({
-        success: true,
-        jobId,
-        filePath: outputLocation,
-        message: "Vídeo renderizado com sucesso (salvo localmente no servidor).",
-      });
-    } catch (err: any) {
-      console.error("Erro ao renderizar vídeo:", err);
-      res.status(500).json({
+    console.log(`Job criado. jobId=${jobId}`);
+
+    // Dispara o render em background, sem bloquear a resposta HTTP
+    (async () => {
+      try {
+        console.log(`Iniciando render do vídeo. jobId=${jobId}`);
+        jobs[jobId].status = "rendering";
+
+        await renderMedia({
+          serveUrl: remotionBundleUrl,
+          composition: "TestComp", // ou "TestComp", se estiver testando a comp curta
+          codec: "h264",
+          outputLocation,
+          inputProps: {
+            name: safeName,
+            photoUrl: safePhotoUrl,
+            audioUrl: safeAudioUrl,
+          },
+        });
+
+        console.log(`Render finalizado. jobId=${jobId}`);
+        jobs[jobId].status = "done";
+        jobs[jobId].filePath = outputLocation;
+      } catch (err: any) {
+        console.error(`Erro ao renderizar vídeo. jobId=${jobId}`, err);
+        jobs[jobId].status = "error";
+        jobs[jobId].errorMessage = err?.message ?? String(err);
+      }
+    })();
+
+    // Responde imediatamente com o jobId
+    res.status(202).json({
+      success: true,
+      jobId,
+      status: "queued",
+      message:
+        "Render solicitado. Consulte /render/{jobId} para acompanhar o status.",
+    });
+  });
+
+  // Endpoint para consultar status do job
+  app.get("/render/:id", (req, res) => {
+    const { id } = req.params;
+    const job = jobs[id];
+
+    if (!job) {
+      return res.status(404).json({
         success: false,
-        message: "Falha ao renderizar vídeo",
-        error: err?.message ?? String(err),
+        message: "Job não encontrado",
       });
     }
+
+    res.json({
+      success: true,
+      jobId: id,
+      status: job.status,
+      filePath: job.filePath,
+      error: job.errorMessage,
+    });
   });
 
   app.listen(PORT, () => {
