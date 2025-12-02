@@ -13,6 +13,11 @@ import {
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
 
+export type NoelCompProps = {
+  name: string;
+  photoUrl: string;
+};
+
 /* ------------ TIPAGEM DOS PROPS ------------ */
 
 export type NoelCompProps = {
@@ -29,118 +34,54 @@ const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
 /* ------------ FOTO SOBRE A CARTA ------------ */
 
-const PhotoOnLetter: React.FC<{ src: string }> = ({ src }) => {
-  const texture = staticFile("ink-texture.webp");
-  const frame = useCurrentFrame();
-
-  const fadeIn = interpolate(frame, [10, 30], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  const fadeOut = interpolate(
-    frame,
-    [POV_LETTER_DURATION - 20, POV_LETTER_DURATION - 5],
-    [1, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const opacity = fadeIn * fadeOut;
-
-  const subtleMoveX = interpolate(
-    frame,
-    [0, POV_LETTER_DURATION],
-    [-8, 8],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const subtleMoveY = interpolate(
-    frame,
-    [0, POV_LETTER_DURATION],
-    [4, -4],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const subtleRotation = interpolate(
-    frame,
-    [0, POV_LETTER_DURATION],
-    [-1.4, -1.0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const subtleScale = interpolate(
-    frame,
-    [0, POV_LETTER_DURATION],
-    [1.01, 1.03],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
+const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   return (
     <div
       style={{
         position: "absolute",
-        top: 250,
-        left: 340,
-        width: 1240,
-        height: 720,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        opacity,
-        transform: `translate(${subtleMoveX}px, ${subtleMoveY}px) rotate(${subtleRotation}deg) scale(${subtleScale})`,
-        transformOrigin: "center center",
-        filter: "drop-shadow(0px 18px 40px rgba(0,0,0,0.55))",
+        top: 320,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: 1180,
+        height: 620,
+        borderRadius: 40,
+        overflow: "hidden",
+        boxShadow: "0 40px 80px rgba(0,0,0,0.55)",
+        backgroundColor: "#1a0d05",
       }}
     >
-      <div
+      {/* Foto dinâmica */}
+      <Img
+        src={photoUrl}
         style={{
-          position: "relative",
           width: "100%",
           height: "100%",
-          borderRadius: 26,
-          overflow: "hidden",
-          backgroundColor: "#1a0f08",
+          objectFit: "cover",
+          filter: "saturate(0.9) brightness(0.9)",
         }}
-      >
-        <Img
-          src={src}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            mixBlendMode: "multiply",
-            filter: "sepia(0.45) contrast(0.98) saturate(0.9)",
-          }}
-        />
+      />
 
-        {/* textura de papel por cima da foto */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            backgroundImage: `url(${texture})`,
-            backgroundSize: "cover",
-            mixBlendMode: "soft-light",
-            opacity: 0.6,
-            pointerEvents: "none",
-          }}
-        />
-      </div>
+      {/* Vignette/overlay mais leve */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(circle at 50% 30%, rgba(255,255,255,0.2), transparent 55%)," +
+            "linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0.9))",
+          mixBlendMode: "multiply",
+        }}
+      />
+
+      {/* borda suave */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: 40,
+          boxShadow: "inset 0 0 60px rgba(0,0,0,0.85)",
+        }}
+      />
     </div>
   );
 };
@@ -154,51 +95,45 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const rawProgress = spring({
     frame,
     fps,
-    config: { damping: 22, stiffness: 80, mass: 1.2 },
-    durationInFrames: 70,
+    config: { damping: 18, stiffness: 120, mass: 0.9 },
+    durationInFrames: 50,
   });
 
-  const anticipation = interpolate(
-    rawProgress,
-    [0, 0.08, 0.2, 1],
-    [0, -0.03, 0.05, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const progress = interpolate(anticipation, [0, 1], [0, 1], {
+  const progress = interpolate(rawProgress, [0, 1], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
-  const opacity = interpolate(rawProgress, [0, 0.04], [0, 1], {
+  const opacity = interpolate(rawProgress, [0, 0.03], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-
-  const safeName = (name ?? "").trim() || "Seu nome aqui";
 
   return (
     <div
       style={{
         position: "absolute",
-        top: 260,
+        top: 265,            // encaixa melhor na carta
         left: "50%",
         transform: "translateX(-50%)",
         pointerEvents: "none",
-        background: "transparent",
-        zIndex: 10,
+        zIndex: 20,
         opacity,
       }}
     >
       <DistressedNameCanvas
-        text={safeName}
+        text={name.toUpperCase()}
         progress={progress}
+        width={820}          // menor pra não virar faixa gigante
+        height={160}
+        fontSize={80}
+        textColor="#2b1603"
+        glowColor="#f5e2b0"
+        roughness={0.45}
+        wobble={0.5}
+        inkBleed={0.8}
+        // usa a textura do public
         textureSrc={staticFile("ink-texture.webp")}
-        frame={frame}
-        fps={fps}
       />
     </div>
   );
@@ -207,6 +142,7 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
 export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
+  // resto do código igual
   const finalName = (name ?? "").trim() || "Seu nome aqui";
 
   // placeholder local (pasta /public)
@@ -220,12 +156,13 @@ export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
 
       {/* parte em que a carta está em primeiro plano */}
       <Sequence
-        from={POV_LETTER_START}
-        durationInFrames={POV_LETTER_DURATION}
-      >
-        <NameOverlay name={finalName} />
-        <PhotoOnLetter src={finalPhoto} />
-      </Sequence>
+  from={POV_LETTER_START}
+  durationInFrames={POV_LETTER_DURATION}
+>
+  <PhotoOnLetter photoUrl={photoUrl} />
+  <NameOverlay name={name} />
+</Sequence>
+
     </AbsoluteFill>
   );
 };
