@@ -7,38 +7,61 @@ import { getCompositions, renderMedia } from "@remotion/renderer";
 const app = express();
 app.use(express.json({ limit: "20mb" }));
 
-// Diretório público para salvar e servir os vídeos
+// Diretório para salvar os vídeos renderizados
 const rendersDir = path.join(process.cwd(), "renders");
 if (!fs.existsSync(rendersDir)) {
   fs.mkdirSync(rendersDir, { recursive: true });
   console.log("📁 Pasta 'renders' criada em:", rendersDir);
 }
 
-// Servir os arquivos gerados em /renders/...
+// Servir /renders/...
 app.use("/renders", express.static(rendersDir));
 
-// Endpoint de render do vídeo do Noel (MyComp)
+// Bundle em memória para reaproveitar entre renders
+let bundleLocationGlobal: string | null = null;
+
+const getOrCreateBundle = async () => {
+  if (bundleLocationGlobal && fs.existsSync(bundleLocationGlobal)) {
+    return bundleLocationGlobal;
+  }
+
+  console.log("📦 (re)Gerando bundle Remotion...");
+  const entry = path.resolve(process.cwd(), "remotion", "index.ts");
+
+  bundleLocationGlobal = await bundle({
+    entryPoint: entry,
+    webpackOverride: (config) => config,
+  });
+
+  console.log("📦 Bundle pronto em:", bundleLocationGlobal);
+  return bundleLocationGlobal;
+};
+
+// Endpoint: render do vídeo do Noel com NOME dinâmico
 app.post("/render", async (req, res) => {
   try {
     console.log("🎬 Iniciando render do vídeo do Noel...");
 
-    // Por enquanto, o MyComp NÃO usa props
-    // (quando for usar nome/foto dinâmico, a gente preenche isso aqui)
-    const inputProps = {};
+    // Pega o nome do body e sanitiza um pouco
+    const rawName = req.body?.name;
+    let safeName = "Nome Custom";
 
-    // 1) Entry do Remotion (remotion/index.ts)
-    const entry = path.resolve(process.cwd(), "remotion", "index.ts");
+    if (typeof rawName === "string") {
+      safeName = rawName.trim();
+      if (!safeName) safeName = "Nome Custom";
+      if (safeName.length > 40) {
+        safeName = safeName.slice(0, 40); // evita textos gigantes quebrando layout
+      }
+    }
 
-    // 2) Gerar bundle
-    console.log("📦 Gerando bundle...");
-    const bundleLocation = await bundle({
-      entryPoint: entry,
-      webpackOverride: (config) => config,
-    });
-    console.log("📦 Bundle final:", bundleLocation);
+    const inputProps = { name: safeName };
+    console.log("📝 Nome usado na composição:", safeName);
 
-    // 3) Pegar a composition registrada no Root.tsx
-    const compositionId = "QuizVideo"; // é o ID, mas o componente é o MyComp (NOEL)
+    // 1) Garante o bundle (reaproveita se já existir)
+    const bundleLocation = await getOrCreateBundle();
+
+    // 2) Busca a composition correta (id definido no Root.tsx)
+    const compositionId = "QuizVideo";
     const comps = await getCompositions(bundleLocation, { inputProps });
 
     const composition = comps.find((c) => c.id === compositionId);
@@ -57,19 +80,22 @@ app.post("/render", async (req, res) => {
       });
     }
 
-    // 4) Arquivo de saída
+    // 3) Define o arquivo de saída
     const fileName = `noel-${Date.now()}.mp4`;
     const outputLocation = path.join(rendersDir, fileName);
 
     console.log("🎥 Renderizando vídeo em:", outputLocation);
 
-    // 5) Renderizar
+    // 4) Renderiza o vídeo
     await renderMedia({
       composition,
       serveUrl: bundleLocation,
       codec: "h264",
       outputLocation,
       inputProps,
+      // Pequenas otimizações
+      concurrency: 8,   // usa bem seus 8 vCPUs
+      logLevel: "error" // menos log, menos overhead
     });
 
     console.log("✅ Render do Noel finalizado!");
