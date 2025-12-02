@@ -5,7 +5,9 @@ import { bundle } from "@remotion/bundler";
 import { getCompositions, renderMedia } from "@remotion/renderer";
 
 const app = express();
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json());
+
+app.use(express.static(path.join(process.cwd(), "public")));
 
 // Diretório para salvar os vídeos renderizados
 const rendersDir = path.join(process.cwd(), "renders");
