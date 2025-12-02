@@ -68,7 +68,7 @@ async function main() {
 
       await renderMedia({
         serveUrl: remotionBundleUrl,
-        composition: "QuizVideo", // id da composição no RemotionRoot
+        composition: "TestComp", // id da composição no RemotionRoot
         codec: "h264",
         outputLocation,
         inputProps: {
