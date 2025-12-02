@@ -14,8 +14,8 @@ import {
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
 
 export type NoelCompProps = {
-  name: string;
-  photoUrl: string;
+  name?: string;
+  photoUrl?: string;
 };
 
 /* ------------ TIPAGEM DOS PROPS ------------ */
@@ -39,47 +39,34 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
     <div
       style={{
         position: "absolute",
-        top: 320,
+        top: 360,
         left: "50%",
         transform: "translateX(-50%)",
-        width: 1180,
-        height: 620,
+        width: 1100,
+        height: 520,
         borderRadius: 40,
         overflow: "hidden",
-        boxShadow: "0 40px 80px rgba(0,0,0,0.55)",
-        backgroundColor: "#1a0d05",
+        background: "#1a0f07",
+        boxShadow: "0 28px 80px rgba(0,0,0,0.8)",
       }}
     >
-      {/* Foto dinâmica */}
       <Img
         src={photoUrl}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          filter: "saturate(0.9) brightness(0.9)",
+          filter: "brightness(0.5) contrast(1.1)",
         }}
       />
-
-      {/* Vignette/overlay mais leve */}
+      {/* overlay âmbar leve por cima da foto */}
       <div
         style={{
           position: "absolute",
           inset: 0,
           background:
-            "radial-gradient(circle at 50% 30%, rgba(255,255,255,0.2), transparent 55%)," +
-            "linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0.9))",
-          mixBlendMode: "multiply",
-        }}
-      />
-
-      {/* borda suave */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: 40,
-          boxShadow: "inset 0 0 60px rgba(0,0,0,0.85)",
+            "radial-gradient(circle at 20% 0%, rgba(255,230,180,0.22), transparent 60%)",
+          mixBlendMode: "soft-light",
         }}
       />
     </div>
@@ -95,45 +82,64 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const rawProgress = spring({
     frame,
     fps,
-    config: { damping: 18, stiffness: 120, mass: 0.9 },
-    durationInFrames: 50,
+    config: { damping: 22, stiffness: 80, mass: 1.2 },
+    durationInFrames: 70,
   });
 
-  const progress = interpolate(rawProgress, [0, 1], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const anticipation = interpolate(
+    rawProgress,
+    [0, 0.08, 0.2, 1],
+    [0, -0.03, 0.05, 1],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }
+  );
 
-  const opacity = interpolate(rawProgress, [0, 0.03], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const progress = interpolate(
+    anticipation,
+    [0, 1],
+    [0, 1],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }
+  );
+
+  const opacity = interpolate(
+    rawProgress,
+    [0, 0.04],
+    [0, 1],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }
+  );
 
   return (
     <div
       style={{
         position: "absolute",
-        top: 265,            // encaixa melhor na carta
+        top: 260,
         left: "50%",
         transform: "translateX(-50%)",
         pointerEvents: "none",
-        zIndex: 20,
+        background: "transparent",
+        zIndex: 10,
         opacity,
       }}
     >
       <DistressedNameCanvas
-        text={name.toUpperCase()}
+        text={name}
         progress={progress}
-        width={820}          // menor pra não virar faixa gigante
-        height={160}
-        fontSize={80}
-        textColor="#2b1603"
-        glowColor="#f5e2b0"
-        roughness={0.45}
-        wobble={0.5}
-        inkBleed={0.8}
-        // usa a textura do public
-        textureSrc={staticFile("ink-texture.webp")}
+        width={900}
+        height={300}
+        fontSize={86}
+        textColor="#301b05"
+        glowColor="#f5e5b2"
+        roughness={0.5}
+        wobble={0.6}
+        inkBleed={0.9}
       />
     </div>
   );
@@ -142,12 +148,10 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
 export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
-  // resto do código igual
-  const finalName = (name ?? "").trim() || "Seu nome aqui";
-
-  // placeholder local (pasta /public)
-  const fallbackPhoto = staticFile("photo-placeholder.jpg");
-  const finalPhoto = (photoUrl ?? "").trim() || fallbackPhoto;
+  // 🔒 Fallbacks seguros
+  const safeName = (name ?? "").trim() || "Amigo(a)";
+  const safePhotoUrl =
+    (photoUrl ?? "").trim() || "/photo-placeholder.jpg";
 
   return (
     <AbsoluteFill>
@@ -159,8 +163,8 @@ export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
   from={POV_LETTER_START}
   durationInFrames={POV_LETTER_DURATION}
 >
-  <PhotoOnLetter photoUrl={photoUrl} />
-  <NameOverlay name={name} />
+  <NameOverlay name={safeName} />
+  <PhotoOnLetter photoUrl={safePhotoUrl} />
 </Sequence>
 
     </AbsoluteFill>

@@ -1,19 +1,30 @@
+// remotion/DistressedTextCanvas.tsx
 import React, { useEffect, useRef } from "react";
 
-type Props = {
+type DistressedNameCanvasProps = {
   text: string;
   progress: number; // 0 → 1
-  textureSrc?: string;
-  frame: number;
-  fps: number;
+  width?: number;
+  height?: number;
+  fontSize?: number;
+  textColor?: string;
+  glowColor?: string;
+  roughness?: number;
+  wobble?: number;
+  inkBleed?: number;
 };
 
-export const DistressedNameCanvas: React.FC<Props> = ({
+export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
   text,
   progress,
-  textureSrc,
-  frame,
-  fps,
+  width = 900,
+  height = 220,
+  fontSize = 86,
+  textColor = "#301b05",
+  glowColor = "#f5e5b2",
+  roughness = 0.5,
+  wobble = 0.6,
+  inkBleed = 0.9,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -21,94 +32,87 @@ export const DistressedNameCanvas: React.FC<Props> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    canvas.width = width;
+    canvas.height = height;
+
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // tamanho fixo do canvas (não depende do DOM → evita NaN)
-    const width = (canvas.width = 900);
-    const height = (canvas.height = 180);
+    // 🔒 Garante que nunca vai NaN / infinito
+    const safeProgressRaw = Number.isFinite(progress) ? progress : 0;
+    const p = Math.min(Math.max(safeProgressRaw, 0), 1);
 
     ctx.clearRect(0, 0, width, height);
 
-    // garante valor finito entre 0 e 1
-    const p = Math.max(0, Math.min(progress, 1));
-    if (p <= 0) return;
-
-    // ---------- CONFIG BÁSICA DO TEXTO ----------
-    ctx.font = "600 80px Georgia, serif";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-
-    const metrics = ctx.measureText(text);
-    const textWidth = metrics.width;
-
-    const paddingX = 40;
-    const x = paddingX;
-    const y = height / 2;
-
-    // “escrita” da esquerda para a direita
-    const visibleWidth = textWidth * p;
-
+    // Centraliza
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(x - 10, 0, visibleWidth + 20, height);
-    ctx.clip();
+    ctx.translate(width / 2, height / 2);
 
-    // cor base do texto
-    const baseGradient = ctx.createLinearGradient(0, 0, 0, height);
-    baseGradient.addColorStop(0, "#f8e2b2");
-    baseGradient.addColorStop(1, "#f7d58a");
+    const visibleLength = Math.max(1, Math.floor(text.length * p));
+    const visibleText = text.slice(0, visibleLength);
 
-    ctx.fillStyle = baseGradient;
-    ctx.fillText(text, x, y);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${fontSize}px "Cinzel", "Times New Roman", serif`;
 
-    // contorno mais escuro para ficar legível
-    ctx.lineWidth = 2.4;
-    ctx.strokeStyle = "#3a220c";
-    ctx.strokeText(text, x, y);
+    // Pequena “tremida” de caligrafia
+    const jitterX =
+      (Math.sin(p * 10) + Math.cos(p * 4)) * roughness * 4;
+    const jitterY = Math.cos(p * 7) * roughness * 3;
 
+    const blurAmount = (1 - p) * 4 * inkBleed;
+
+    // ✨ Glow suave
+    ctx.save();
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 18 * (0.4 + p);
+    ctx.fillStyle = textColor;
+    ctx.filter = `blur(${blurAmount}px)`;
+    ctx.fillText(visibleText, jitterX, jitterY);
     ctx.restore();
 
-    // ---------- TEXTURA / “FALHAS” ----------
-    if (textureSrc) {
-      const img = new Image();
-      img.src = textureSrc;
-      img.onload = () => {
-        const jitterX = Math.sin(frame / fps) * 6;
-        const jitterY = Math.cos(frame / fps) * 4;
+    // Texto principal
+    ctx.fillStyle = textColor;
+    ctx.filter = "none";
+    ctx.fillText(visibleText, jitterX, jitterY);
 
-        ctx.save();
-        ctx.globalCompositeOperation = "multiply";
-        ctx.globalAlpha = 0.6;
-        ctx.drawImage(img, jitterX * 0.6, jitterY * 0.4, width, height);
-        ctx.restore();
+    // Pequenas manchas / respingos
+    const dotsCount = 18;
+    for (let i = 0; i < dotsCount; i++) {
+      const t = i / dotsCount;
+      const angle = t * Math.PI * 2;
+      const radius = 40 + 60 * t;
 
-        // pequenas falhas de tinta nas bordas
-        ctx.save();
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.globalAlpha = 0.22;
+      const dotX = Math.cos(angle) * radius * (0.4 + wobble);
+      const dotY = Math.sin(angle * 1.3) * radius * 0.4;
 
-        for (let i = 0; i < 60; i++) {
-          const rx = x - 15 + Math.random() * (textWidth + 30);
-          const ry = y - 50 + Math.random() * 100;
-          const r = 1 + Math.random() * 4;
-          ctx.beginPath();
-          ctx.arc(rx, ry, r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        ctx.restore();
-      };
+      const alpha = (0.25 + Math.random() * 0.35) * p;
+      ctx.fillStyle = `rgba(64, 40, 15, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 1.5 + Math.random() * 1.8, 0, Math.PI * 2);
+      ctx.fill();
     }
-  }, [text, progress, textureSrc, frame, fps]);
+
+    ctx.restore();
+  }, [
+    text,
+    progress,
+    width,
+    height,
+    fontSize,
+    textColor,
+    glowColor,
+    roughness,
+    wobble,
+    inkBleed,
+  ]);
 
   return (
     <canvas
       ref={canvasRef}
       style={{
-        width: 900,
-        height: 180,
         display: "block",
+        background: "transparent",
       }}
     />
   );
