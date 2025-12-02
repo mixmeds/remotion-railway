@@ -14,8 +14,8 @@ export const RemotionRoot: React.FC = () => {
         durationInFrames={1200}
         defaultProps={{
           name: "Mariana",
-          photoUrl:
-            "https://via.placeholder.com/800x600.png?text=Foto+de+Exemplo",
+          // deixa vazio para cair no placeholder local
+          photoUrl: "",
         }}
       />
     </>
