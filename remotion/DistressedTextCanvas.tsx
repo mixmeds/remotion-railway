@@ -3,7 +3,7 @@ import React, { useEffect, useRef } from "react";
 type Props = {
   text: string;
   progress: number; // 0 → 1
-  textureSrc?: string;
+  textureSrc?: string; // mantido, se quiser usar depois
   frame: number;
   fps: number;
 };
@@ -11,7 +11,7 @@ type Props = {
 export const DistressedNameCanvas: React.FC<Props> = ({
   text,
   progress,
-  textureSrc,
+  textureSrc, // não estou usando por enquanto pra simplificar
   frame,
   fps,
 }) => {
@@ -20,161 +20,143 @@ export const DistressedNameCanvas: React.FC<Props> = ({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const width = (canvas.width = 900);
-    const height = (canvas.height = 180);
+    // ---------- SANITIZAÇÃO DOS VALORES ----------
+    const safeProgressRaw = Number.isFinite(progress) ? progress : 0;
+    const safeProgress = Math.min(1, Math.max(0, safeProgressRaw));
+
+    const safeFrame = Number.isFinite(frame) ? frame : 0;
+    const safeFps = Number.isFinite(fps) && fps > 0 ? fps : 30;
+
+    const t = safeFrame / safeFps;
+
+    const width = canvas.width;
+    const height = canvas.height;
 
     ctx.clearRect(0, 0, width, height);
 
-    const p = Math.max(0, Math.min(progress, 1));
-    if (p <= 0) return;
+    // ---------- BACKGROUND TRANSPARENTE ----------
+    ctx.fillStyle = "rgba(0,0,0,0)";
+    ctx.fillRect(0, 0, width, height);
 
-    // ---------- CONFIG BÁSICA DO TEXTO ----------
-    ctx.font = "600 80px Georgia, serif";
-    ctx.textAlign = "left";
+    // ---------- CONFIG TEXTO ----------
+    const fontSize = 90;
+    ctx.font = `700 ${fontSize}px "Cinzel", serif`;
+    ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    const metrics = ctx.measureText(text);
-    const textWidth = metrics.width;
-    const textX = (width - textWidth) / 2; // centraliza
+    const textX = width / 2;
     const textY = height / 2;
 
-    const revealWidth = textWidth * p;
-    const revealX = textX + revealWidth; // ponta da caneta
+    const upperText = (text || "").toUpperCase();
 
-    const drawText = (texture?: HTMLImageElement) => {
-      ctx.save();
+    // ---------- TEXTO BASE / SOMBRA ----------
+    ctx.save();
+    ctx.fillStyle = "#f5e0b5";
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 4;
+    ctx.fillText(upperText, textX, textY);
+    ctx.restore();
 
-      // recorte acompanhando a escrita
-      ctx.beginPath();
-      ctx.rect(textX, 0, revealWidth, height);
-      ctx.clip();
+    // ---------- MÁSCARA DE REVEAL (ESCRITA) ----------
+    const revealWidth = width * safeProgress;
 
-      // gradiente da tinta
-      const gradient = ctx.createLinearGradient(
-        textX,
-        0,
-        textX + textWidth,
-        height
-      );
-      gradient.addColorStop(0, "#5a3b22");
-      gradient.addColorStop(0.5, "#3b2614");
-      gradient.addColorStop(1, "#2a1a10");
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(textX - width / 2, 0, revealWidth, height);
+    ctx.clip();
 
-      ctx.fillStyle = gradient;
-      ctx.shadowColor = "rgba(0,0,0,0.18)";
-      ctx.shadowBlur = 2;
-      ctx.shadowOffsetY = 1;
+    // contorno interno / “distressed” básico
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(120,60,10,0.9)";
+    ctx.strokeText(upperText, textX, textY);
 
-      ctx.globalAlpha = 0.95;
-      ctx.fillText(text, textX, textY);
+    ctx.restore();
 
-      // “ghost” leve
-      ctx.globalAlpha = 0.12;
-      ctx.fillText(text, textX + 1, textY - 1);
-      ctx.fillText(text, textX - 1, textY + 1);
-      ctx.globalAlpha = 1;
+    // ---------- BRILHO NO FRONT DA ESCRITA ----------
+    const glowX = textX - width / 2 + revealWidth;
+    const glowRadius = 70;
 
-      // textura dentro das letras
-      if (texture) {
-        ctx.globalCompositeOperation = "source-atop";
-        ctx.globalAlpha = 0.4;
-        ctx.drawImage(texture, textX, 0, textWidth, height);
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = "source-over";
-      }
-
-      ctx.restore();
-    };
-
-    // carrega textura se tiver
-    if (textureSrc) {
-      const texture = new Image();
-      texture.src = textureSrc;
-
-      if (texture.complete) {
-        drawText(texture);
-      } else {
-        texture.onload = () => drawText(texture);
-        texture.onerror = () => drawText();
-      }
-    } else {
-      drawText();
-    }
-
-    // ---------- BRILHO + SPARKLES COM FADE NO FIM ----------
-    if (p > 0) {
-      const textYBase = textY - 5;
-      const glowRadius = 45;
-
-      // fade-out nos últimos 10% da animação
-      const fade = p < 0.9 ? 1 : 1 - (p - 0.9) * 10;
-      if (fade <= 0) return;
-
-      // brilho principal
+    if (
+      Number.isFinite(glowX) &&
+      Number.isFinite(textY) &&
+      Number.isFinite(glowRadius) &&
+      glowRadius > 0
+    ) {
       const grad = ctx.createRadialGradient(
-        revealX,
-        textYBase,
+        glowX,
+        textY,
         0,
-        revealX,
-        textYBase,
+        glowX,
+        textY,
         glowRadius
       );
-      grad.addColorStop(0, "rgba(255,255,255,1)");
-      grad.addColorStop(0.3, "rgba(255,230,120,0.95)");
-      grad.addColorStop(0.6, "rgba(255,210,80,0.5)");
-      grad.addColorStop(1, "rgba(255,200,0,0)");
+      grad.addColorStop(0, "rgba(255,255,255,0.95)");
+      grad.addColorStop(0.3, "rgba(255,230,140,0.9)");
+      grad.addColorStop(0.7, "rgba(255,200,60,0.4)");
+      grad.addColorStop(1, "rgba(255,180,0,0)");
 
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
-      ctx.globalAlpha = fade;
+      ctx.fillStyle = grad;
+      ctx.fillRect(
+        glowX - glowRadius * 1.5,
+        textY - glowRadius * 1.5,
+        glowRadius * 3,
+        glowRadius * 3
+      );
+      ctx.restore();
+    }
+
+    // ---------- SPARKLES / PARTICULAS LEVES ----------
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+
+    const sparkleCount = 12;
+    for (let i = 0; i < sparkleCount; i++) {
+      const angle =
+        (i / sparkleCount) * Math.PI * 2 +
+        t * 1.5 +
+        Math.sin(t * 2 + i * 0.7) * 0.4;
+
+      const baseR = 20 + 10 * Math.sin(t * 2 + i);
+      const r = baseR + safeProgress * 40;
+
+      const sx = glowX + Math.cos(angle) * r;
+      const sy = textY + Math.sin(angle) * r * 0.5;
+
+      if (!Number.isFinite(sx) || !Number.isFinite(sy)) {
+        continue;
+      }
+
+      const size = 2 + safeProgress * 4;
+      if (!Number.isFinite(size) || size <= 0) {
+        continue;
+      }
+
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, size);
+      grad.addColorStop(0, "rgba(255,255,255,1)");
+      grad.addColorStop(1, "rgba(255,255,255,0)");
+
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(revealX, textYBase, glowRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, size, 0, Math.PI * 2);
       ctx.fill();
-      ctx.restore();
-
-      // sparkles
-      const t = frame / fps;
-
-      for (let i = 0; i < 10; i++) {
-        const angleDeg =
-          i * 36 + t * 120 + Math.sin(t * 3 + i * 1.3) * 25;
-        const angle = (angleDeg * Math.PI) / 180;
-
-        const baseDist = 20 + Math.sin(t * 2 + i) * 8;
-        const dist = baseDist + (Math.sin(t * 4 + i * 2) + 1) * 8;
-
-        const sx = revealX + Math.cos(angle) * dist;
-        const sy = textYBase + Math.sin(angle) * dist;
-
-        const life = (Math.sin(t * 5 + i) + 1) / 2; // 0 → 1
-        const size = 4 + life * 6;
-        const opacity = (0.3 + life * 0.7) * fade;
-
-        ctx.save();
-        ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = opacity;
-
-        const sparkGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, size);
-        sparkGrad.addColorStop(0, "rgba(255,255,255,1)");
-        sparkGrad.addColorStop(0.5, "rgba(255,240,150,0.9)");
-        sparkGrad.addColorStop(1, "rgba(255,220,100,0)");
-
-        ctx.fillStyle = sparkGrad;
-        ctx.beginPath();
-        ctx.arc(sx, sy, size, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
     }
+
+    ctx.restore();
   }, [text, progress, textureSrc, frame, fps]);
 
   return (
     <canvas
       ref={canvasRef}
+      // IMPORTANTE: width/height no elemento, não só no style
+      width={900}
+      height={180}
       style={{
         width: 900,
         height: 180,
