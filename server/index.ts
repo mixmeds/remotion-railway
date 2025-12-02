@@ -17,18 +17,16 @@ if (!fs.existsSync(rendersDir)) {
 // Servir os arquivos gerados em /renders/...
 app.use("/renders", express.static(rendersDir));
 
-// Endpoint de render
+// Endpoint de render do vídeo do Noel (MyComp)
 app.post("/render", async (req, res) => {
   try {
-    console.log("🎬 Iniciando render...");
+    console.log("🎬 Iniciando render do vídeo do Noel...");
 
-    const { name } = (req.body || {}) as { name?: string };
+    // Por enquanto, o MyComp NÃO usa props
+    // (quando for usar nome/foto dinâmico, a gente preenche isso aqui)
+    const inputProps = {};
 
-    const inputProps = {
-      name: name ?? "Teste rápido",
-    };
-
-    // 1) Entry do Remotion
+    // 1) Entry do Remotion (remotion/index.ts)
     const entry = path.resolve(process.cwd(), "remotion", "index.ts");
 
     // 2) Gerar bundle
@@ -39,9 +37,10 @@ app.post("/render", async (req, res) => {
     });
     console.log("📦 Bundle final:", bundleLocation);
 
-    // 3) Buscar compositions e pegar a TestComp
+    // 3) Pegar a composition registrada no Root.tsx
+    const compositionId = "QuizVideo"; // é o ID, mas o componente é o MyComp (NOEL)
     const comps = await getCompositions(bundleLocation, { inputProps });
-    const compositionId = "TestComp";
+
     const composition = comps.find((c) => c.id === compositionId);
 
     if (!composition) {
@@ -58,8 +57,8 @@ app.post("/render", async (req, res) => {
       });
     }
 
-    // 4) Definir caminho de saída no diretório público
-    const fileName = `test-${Date.now()}.mp4`;
+    // 4) Arquivo de saída
+    const fileName = `noel-${Date.now()}.mp4`;
     const outputLocation = path.join(rendersDir, fileName);
 
     console.log("🎥 Renderizando vídeo em:", outputLocation);
@@ -73,11 +72,9 @@ app.post("/render", async (req, res) => {
       inputProps,
     });
 
-    console.log("✅ Render finalizado!");
+    console.log("✅ Render do Noel finalizado!");
 
-    // 6) Retornar URL acessível
     const publicUrl = `/renders/${fileName}`;
-
     return res.json({
       ok: true,
       url: publicUrl,
