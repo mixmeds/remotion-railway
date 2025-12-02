@@ -1,152 +1,111 @@
-import { bundle } from "@remotion/bundler";
-import { renderMedia } from "@remotion/renderer";
-import dotenv from "dotenv";
 import express from "express";
-import path from "node:path";
-import fs from "node:fs";
-import { randomUUID } from "node:crypto";
+import path from "path";
+import fs from "fs";
+import {
+  bundle,
+  getCompositions,
+  renderMedia,
+  selectComposition,
+} from "@remotion/renderer";
 
-dotenv.config();
+const app = express();
+app.use(express.json());
 
-const { PORT = 3000, REMOTION_SERVE_URL } = process.env;
+const PORT = process.env.PORT ?? 3000;
 
-// Estrutura simples em memória para acompanhar jobs
-type JobStatus = "queued" | "rendering" | "done" | "error";
+// Entry do Remotion (conforme seu projeto)
+const entryFile = path.join(process.cwd(), "remotion", "index.ts");
 
-type Job = {
-  status: JobStatus;
-  filePath?: string;
-  errorMessage?: string;
-};
+// Pasta onde os vídeos serão salvos
+const rendersDir = path.join(process.cwd(), "renders");
+if (!fs.existsSync(rendersDir)) {
+  fs.mkdirSync(rendersDir, { recursive: true });
+}
 
-const jobs: Record<string, Job> = {};
+// Cache do bundle para não recompilar toda hora
+let bundledServeUrl: string | null = null;
 
-async function main() {
-  const app = express();
-  app.use(express.json());
+async function getServeUrl() {
+  if (bundledServeUrl) return bundledServeUrl;
 
-  // Pasta para salvar os renders dentro do container
-  const rendersDir = path.resolve("renders");
-  if (!fs.existsSync(rendersDir)) {
-    fs.mkdirSync(rendersDir, { recursive: true });
-  }
-
-  // Bundle do projeto Remotion (uma vez por deploy)
-  const remotionBundleUrl =
-    REMOTION_SERVE_URL ??
-    (await bundle({
-      entryPoint: path.resolve("remotion/index.ts"),
-      onProgress(progress) {
-        console.info(`Bundling Remotion project: ${progress}%`);
-      },
-    }));
-
-  console.log("Remotion project bundled.");
-
-  // Healthcheck
-  app.get("/health", (_req, res) => {
-    res.json({ ok: true });
+  bundledServeUrl = await bundle({
+    entryPoint: entryFile,
+    outDir: path.join(process.cwd(), "remotion-bundle"),
+    webpackOverride: (config) => config,
   });
 
-  /**
-   * Cria um job de renderização ASSÍNCRONO
-   * Body esperado (por enquanto tudo opcional):
-   * {
-   *   "name": "Marcos",
-   *   "photoUrl": "https://.../foto.jpg",
-   *   "audioUrl": "https://.../audio.mp3"
-   * }
-   */
-  app.post("/render", async (req, res) => {
-    const { name, photoUrl, audioUrl } = req.body ?? {};
+  return bundledServeUrl;
+}
 
-    const safeName =
-      typeof name === "string" && name.trim() ? name.trim() : "Nome Custom";
+// Healthcheck simples
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
 
-    const safePhotoUrl =
-      typeof photoUrl === "string" && photoUrl.trim()
-        ? photoUrl.trim()
-        : null;
-
-    const safeAudioUrl =
-      typeof audioUrl === "string" && audioUrl.trim()
-        ? audioUrl.trim()
-        : null;
-
-    const jobId = randomUUID();
-    const outputLocation = path.join(rendersDir, `${jobId}.mp4`);
-
-    // Marca como enfileirado
-    jobs[jobId] = {
-      status: "queued",
+// Endpoint único de render
+app.post("/render", async (req, res) => {
+  try {
+    const { name, compositionId } = (req.body || {}) as {
+      name?: string;
+      compositionId?: string;
     };
 
-    console.log(`Job criado. jobId=${jobId}`);
+    const serveUrl = await getServeUrl();
 
-    // Dispara o render em background, sem bloquear a resposta HTTP
-    (async () => {
-      try {
-        console.log(`Iniciando render do vídeo. jobId=${jobId}`);
-        jobs[jobId].status = "rendering";
-
-        await renderMedia({
-          serveUrl: remotionBundleUrl,
-          composition: "TestComp", // ou "TestComp", se estiver testando a comp curta
-          codec: "h264",
-          outputLocation,
-          inputProps: {
-            name: safeName,
-            photoUrl: safePhotoUrl,
-            audioUrl: safeAudioUrl,
-          },
-        });
-
-        console.log(`Render finalizado. jobId=${jobId}`);
-        jobs[jobId].status = "done";
-        jobs[jobId].filePath = outputLocation;
-      } catch (err: any) {
-        console.error(`Erro ao renderizar vídeo. jobId=${jobId}`, err);
-        jobs[jobId].status = "error";
-        jobs[jobId].errorMessage = err?.message ?? String(err);
-      }
-    })();
-
-    // Responde imediatamente com o jobId
-    res.status(202).json({
-      success: true,
-      jobId,
-      status: "queued",
-      message:
-        "Render solicitado. Consulte /render/{jobId} para acompanhar o status.",
+    const comps = await getCompositions(serveUrl, {
+      inputProps: {},
     });
-  });
 
-  // Endpoint para consultar status do job
-  app.get("/render/:id", (req, res) => {
-    const { id } = req.params;
-    const job = jobs[id];
+    // Por padrão, usamos a TestComp (rápida)
+    const targetId = compositionId ?? "TestComp";
 
-    if (!job) {
-      return res.status(404).json({
-        success: false,
-        message: "Job não encontrado",
+    const composition = selectComposition(comps, targetId);
+
+    if (!composition) {
+      return res.status(400).json({
+        ok: false,
+        error: `Composition "${targetId}" não encontrada. Verifique se o id está registrado no RemotionRoot.`,
       });
     }
 
-    res.json({
-      success: true,
-      jobId: id,
-      status: job.status,
-      filePath: job.filePath,
-      error: job.errorMessage,
+    const fileName = `${targetId}-${Date.now()}.mp4`;
+    const outputLocation = path.join(rendersDir, fileName);
+
+    await renderMedia({
+      serveUrl,
+      composition,
+      codec: "h264",
+      outputLocation,
+      inputProps: {
+        // props que sua comp receber, por enquanto só "name"
+        name: name ?? "Teste rápido",
+      },
+      // Caso dê problema de Chrome no Railway, depois podemos ajustar chromiumOptions aqui
+      // chromiumOptions: { disableWebSecurity: true },
     });
-  });
 
-  app.listen(PORT, () => {
-    console.info(`Server is running on port ${PORT}`);
-  });
-}
+    return res.json({
+      ok: true,
+      file: fileName,
+      url: `/renders/${fileName}`,
+    });
+  } catch (err) {
+    console.error("Erro no /render:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : "Erro desconhecido ao renderizar",
+    });
+  }
+});
 
-main().catch((err) => {
-  console.error("Failed to start server:", err);
+// Servir os vídeos gerados
+app.use(
+  "/renders",
+  express.static(rendersDir, {
+    maxAge: 0,
+  }),
+);
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server rodando em http://localhost:${PORT}`);
 });
