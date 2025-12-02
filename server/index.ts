@@ -1,9 +1,10 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { bundle } from "@remotion/bundler";
 import {
-  renderMedia,
   getCompositions,
+  renderMedia,
   selectComposition,
 } from "@remotion/renderer";
 
@@ -12,8 +13,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT ?? 3000;
 
-// Entry file do Remotion v4
-const entry = path.join(process.cwd(), "remotion", "index.ts");
+// Entry do Remotion (remotion/index.ts)
+const entryFile = path.join(process.cwd(), "remotion", "index.ts");
 
 // Pasta onde os vídeos serão salvos
 const rendersDir = path.join(process.cwd(), "renders");
@@ -21,30 +22,61 @@ if (!fs.existsSync(rendersDir)) {
   fs.mkdirSync(rendersDir, { recursive: true });
 }
 
+// Cache do bundle para não recompilar toda hora
+let cachedServeUrl: string | null = null;
+
+async function getServeUrl() {
+  if (cachedServeUrl) {
+    return cachedServeUrl;
+  }
+
+  const outDir = path.join(process.cwd(), "remotion-bundle");
+
+  const serveUrl = await bundle({
+    entryPoint: entryFile,
+    outDir,
+    // se tiver alguma customização de webpack, coloca aqui
+    webpackOverride: (config) => config,
+    // publicDir: path.join(process.cwd(), "public"), // se precisar
+  });
+
+  cachedServeUrl = serveUrl;
+  console.log("✅ Bundle gerado em:", serveUrl);
+  return serveUrl;
+}
+
+// Healthcheck
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-// Render (usando TestComp por padrão)
+// Render - usa TestComp por padrão
 app.post("/render", async (req, res) => {
   try {
-    const { compositionId = "TestComp", name = "Teste rápido" } = req.body ?? {};
+    const { compositionId, name } = (req.body || {}) as {
+      compositionId?: string;
+      name?: string;
+    };
 
-    // Aqui NÃO tem bundle() no Remotion v4
-    // O entry direto funciona como serveUrl
-    const serveUrl = entry;
+    const serveUrl = await getServeUrl();
 
-    const comps = await getCompositions(serveUrl);
-    const composition = selectComposition(comps, compositionId);
+    const comps = await getCompositions(serveUrl, {
+      inputProps: {},
+    });
+
+    const targetId = compositionId ?? "TestComp";
+    const composition = selectComposition(comps, targetId);
 
     if (!composition) {
       return res.status(400).json({
         ok: false,
-        error: `Composition "${compositionId}" não encontrada.`,
+        error: `Composition "${targetId}" não encontrada. Comps disponíveis: ${comps
+          .map((c) => c.id)
+          .join(", ")}`,
       });
     }
 
-    const fileName = `${compositionId}-${Date.now()}.mp4`;
+    const fileName = `${targetId}-${Date.now()}.mp4`;
     const outputLocation = path.join(rendersDir, fileName);
 
     await renderMedia({
@@ -53,10 +85,10 @@ app.post("/render", async (req, res) => {
       codec: "h264",
       outputLocation,
       inputProps: {
-        name,
+        name: name ?? "Teste rápido",
       },
-      // para Railway (Chrome headless)
       chromiumOptions: {
+        // esses flags costumam ajudar em ambiente cloud
         disableWebSecurity: true,
         ignoreCertificateErrors: true,
       },
@@ -67,18 +99,22 @@ app.post("/render", async (req, res) => {
       file: fileName,
       url: `/renders/${fileName}`,
     });
-
   } catch (err) {
     console.error("Erro no /render:", err);
     return res.status(500).json({
       ok: false,
-      error: err instanceof Error ? err.message : "Erro desconhecido",
+      error: err instanceof Error ? err.message : "Erro desconhecido ao renderizar",
     });
   }
 });
 
-// Servir arquivos gerados
-app.use("/renders", express.static(rendersDir));
+// Servir vídeos gerados
+app.use(
+  "/renders",
+  express.static(rendersDir, {
+    maxAge: 0,
+  }),
+);
 
 app.listen(PORT, () => {
   console.log(`🚀 Server rodando em http://localhost:${PORT}`);
