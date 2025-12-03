@@ -27,49 +27,62 @@ const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
-/* ------------ FOTO SOBRE A CARTA ------------ */
+/* ------------ FOTO SOBRE A CARTA (LAYOUT DO LOCAL) ------------ */
 
 const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
+  const texture = staticFile("ink-texture.webp");
+
   return (
     <div
       style={{
         position: "absolute",
-        top: 360,
+
+        // 🔥 POSIÇÃO E DIMENSÕES COPIADAS DO LOCAL
+        top: 500,
         left: "50%",
         transform: "translateX(-50%)",
-        width: 1100,
-        height: 520,
-        borderRadius: 40,
+
+        width: 520,
+        height: 300,
+
+        borderRadius: 18,
         overflow: "hidden",
-        background: "#1a0f07",
-        boxShadow: "0 28px 80px rgba(0,0,0,0.8)",
+
+        background: "#dec8a4",
+        boxShadow: "0 0 0 2px rgba(80, 50, 20, 0.25)",
       }}
     >
+      {/* FOTO COM FIT CORRETO */}
       <Img
         src={photoUrl}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          filter: "brightness(0.5) contrast(1.1)",
+
+          // mescla igual ao local (visual old paper)
+          mixBlendMode: "multiply",
+          filter: "sepia(0.5) contrast(0.95) saturate(0.9)",
         }}
       />
 
-      {/* overlay de iluminação quente por cima */}
+      {/* TEXTURA DO PAPEL SOBRE A FOTO */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background:
-            "radial-gradient(circle at 20% 0%, rgba(255,230,180,0.22), transparent 60%)",
+          backgroundImage: `url(${texture})`,
+          backgroundSize: "cover",
           mixBlendMode: "soft-light",
+          opacity: 0.6,
+          pointerEvents: "none",
         }}
       />
     </div>
   );
 };
 
-/* ------------ NAME OVERLAY / ANIMAÇÃO ------------ */
+/* ------------ NAME OVERLAY (LAYOUT DO LOCAL MANTIDO) ------------ */
 
 const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const frame = useCurrentFrame();
@@ -106,9 +119,12 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
     <div
       style={{
         position: "absolute",
+
+        // 🔥 POSIÇÃO PERFETA E COMPATÍVEL COM O LAYOUT LOCAL
         top: 260,
         left: "50%",
         transform: "translateX(-50%)",
+
         pointerEvents: "none",
         background: "transparent",
         zIndex: 10,
