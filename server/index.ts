@@ -50,9 +50,6 @@ if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET && R2_ACCOUNT_ID) {
   );
 }
 
-/**
- * Faz upload de um arquivo local para o R2 e retorna a URL pública.
- */
 const uploadVideoToR2 = async (localFilePath: string, objectKey: string) => {
   if (!r2Client || !R2_BUCKET || !R2_ACCOUNT_ID) {
     throw new Error("R2 não está configurado.");
@@ -85,8 +82,7 @@ const getBundledLocation = async () => {
   console.log("📦 Gerando bundle do Remotion pela primeira vez...");
   bundledLocation = await bundle({
     entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
-    // Se o seu entry real for .tsx, use:
-    // entryPoint: path.join(process.cwd(), "remotion", "index.tsx"),
+    // Se seu entry real for .tsx, troque para index.tsx
     webpackOverride: (config) => config,
   });
 
@@ -95,90 +91,187 @@ const getBundledLocation = async () => {
 };
 
 /* -------------------------------------------------------------------------- */
+/*                            SISTEMA DE JOBS (FILA)                          */
+/* -------------------------------------------------------------------------- */
+
+type JobStatus = "queued" | "rendering" | "uploading" | "done" | "error";
+
+type RenderJob = {
+  id: string;
+  name: string;
+  photoUrl: string;
+  status: JobStatus;
+  videoUrl?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const jobs = new Map<string, RenderJob>();
+const queue: string[] = [];
+let isProcessing = false;
+
+const nowISO = () => new Date().toISOString();
+
+const enqueueJob = (job: RenderJob) => {
+  jobs.set(job.id, job);
+  queue.push(job.id);
+  processQueue().catch((err) =>
+    console.error("Erro ao processar fila:", err)
+  );
+};
+
+const processQueue = async () => {
+  if (isProcessing) return;
+  const nextId = queue.shift();
+  if (!nextId) return;
+
+  const job = jobs.get(nextId);
+  if (!job) return;
+
+  isProcessing = true;
+  try {
+    console.log(`🎬 Processando job ${job.id}...`);
+    await runRenderJob(job);
+    console.log(`✅ Job ${job.id} finalizado com sucesso.`);
+  } catch (err: any) {
+    console.error(`❌ Erro no job ${job.id}:`, err);
+    job.status = "error";
+    job.error = err?.message ?? "Erro desconhecido";
+    job.updatedAt = nowISO();
+    jobs.set(job.id, job);
+  } finally {
+    isProcessing = false;
+    if (queue.length > 0) {
+      // processa o próximo
+      processQueue().catch((err) =>
+        console.error("Erro ao processar fila:", err)
+      );
+    }
+  }
+};
+
+const runRenderJob = async (job: RenderJob) => {
+  const serveUrl = await getBundledLocation();
+
+  // pega a composição 'noel'
+  const comps = await getCompositions(serveUrl, {
+    inputProps: { name: job.name, photoUrl: job.photoUrl },
+  });
+  const composition = comps.find((c) => c.id === "noel");
+
+  if (!composition) {
+    throw new Error("Composição 'noel' não encontrada.");
+  }
+
+  const tempOutputPath = path.join("/tmp", `${job.id}.mp4`);
+
+  job.status = "rendering";
+  job.updatedAt = nowISO();
+  jobs.set(job.id, job);
+
+  console.log(`🎥 Renderizando job ${job.id}...`);
+
+  await renderMedia({
+    serveUrl,
+    composition,
+    codec: "h264",
+    outputLocation: tempOutputPath,
+    inputProps: { name: job.name, photoUrl: job.photoUrl },
+  });
+
+  console.log(`📤 Upload do job ${job.id}...`);
+  job.status = "uploading";
+  job.updatedAt = nowISO();
+  jobs.set(job.id, job);
+
+  let videoUrl: string;
+
+  if (r2Client && R2_BUCKET && R2_ACCOUNT_ID) {
+    const objectKey = `renders/${job.id}.mp4`;
+    videoUrl = await uploadVideoToR2(tempOutputPath, objectKey);
+    await fsPromises.unlink(tempOutputPath).catch(() => {});
+    console.log(`☁️ Vídeo do job ${job.id} enviado para R2.`);
+  } else {
+    const finalPath = path.join(rendersDir, `${job.id}.mp4`);
+    await fsPromises.rename(tempOutputPath, finalPath);
+    videoUrl = `/renders/${job.id}.mp4`;
+    console.log(
+      `⚠️ R2 não configurado. Vídeo do job ${job.id} salvo localmente em ${finalPath}.`
+    );
+  }
+
+  job.status = "done";
+  job.videoUrl = videoUrl;
+  job.updatedAt = nowISO();
+  jobs.set(job.id, job);
+};
+
+/* -------------------------------------------------------------------------- */
 /*                                  ROTAS                                     */
 /* -------------------------------------------------------------------------- */
 
 app.get("/", (_req, res) => {
-  res.json({ ok: true, message: "Servidor Remotion + R2 ativo." });
+  res.json({ ok: true, message: "Servidor Remotion + Jobs + R2 ativo." });
 });
 
-app.post("/render", async (req, res) => {
-  try {
-    const { name, photoUrl } = req.body as {
-      name?: string;
-      photoUrl?: string;
-    };
+// Cria um job de render (não espera o vídeo ficar pronto)
+app.post("/render", (req, res) => {
+  const { name, photoUrl } = req.body as {
+    name?: string;
+    photoUrl?: string;
+  };
 
-    if (!name || !photoUrl) {
-      return res.status(400).json({
-        ok: false,
-        error: "Envie 'name' e 'photoUrl' no body.",
-      });
-    }
-
-    const serveUrl = await getBundledLocation();
-
-    // Buscar a composição "noel"
-    const comps = await getCompositions(serveUrl, {
-      inputProps: { name, photoUrl },
-    });
-    const composition = comps.find((c) => c.id === "noel");
-
-    if (!composition) {
-      return res.status(500).json({
-        ok: false,
-        error: "Composição 'noel' não encontrada.",
-      });
-    }
-
-    const jobId = randomUUID();
-
-    // Caminho temporário para render local
-    const tempOutputPath = path.join("/tmp", `${jobId}.mp4`);
-
-    console.log(`🎬 Iniciando render do job ${jobId}...`);
-
-    await renderMedia({
-      serveUrl,
-      composition,
-      codec: "h264",
-      outputLocation: tempOutputPath,
-      inputProps: { name, photoUrl },
-    });
-
-    console.log(`✅ Render do job ${jobId} concluído. Subindo para R2...`);
-
-    let videoUrl: string;
-
-    if (r2Client && R2_BUCKET && R2_ACCOUNT_ID) {
-      const objectKey = `renders/${jobId}.mp4`;
-      videoUrl = await uploadVideoToR2(tempOutputPath, objectKey);
-
-      // Remover arquivo temporário local
-      await fsPromises.unlink(tempOutputPath).catch(() => {});
-      console.log(`☁️ Vídeo do job ${jobId} enviado para R2.`);
-    } else {
-      // Fallback: mantém no disco local e serve via /renders
-      const finalPath = path.join(rendersDir, `${jobId}.mp4`);
-      await fsPromises.rename(tempOutputPath, finalPath);
-      videoUrl = `/renders/${jobId}.mp4`;
-      console.log(
-        `⚠️ R2 não configurado. Vídeo do job ${jobId} salvo localmente em ${finalPath}.`
-      );
-    }
-
-    return res.json({
-      ok: true,
-      jobId,
-      videoUrl,
-    });
-  } catch (err: any) {
-    console.error("❌ Erro no /render:", err);
-    return res.status(500).json({
+  if (!name || !photoUrl) {
+    return res.status(400).json({
       ok: false,
-      error: err?.message ?? "Erro desconhecido ao renderizar",
+      error: "Envie 'name' e 'photoUrl' no body.",
     });
   }
+
+  const jobId = randomUUID();
+  const safeName = name.trim();
+  const safePhotoUrl = photoUrl.trim();
+
+  const job: RenderJob = {
+    id: jobId,
+    name: safeName,
+    photoUrl: safePhotoUrl,
+    status: "queued",
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  };
+
+  enqueueJob(job);
+
+  return res.json({
+    ok: true,
+    jobId,
+    status: job.status,
+  });
+});
+
+// Consulta status de um job
+app.get("/job/:id", (req, res) => {
+  const id = req.params.id;
+  const job = jobs.get(id);
+
+  if (!job) {
+    return res.status(404).json({
+      ok: false,
+      error: "Job não encontrado.",
+    });
+  }
+
+  return res.json({
+    ok: true,
+    jobId: job.id,
+    status: job.status,
+    videoUrl: job.videoUrl ?? null,
+    error: job.error ?? null,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  });
 });
 
 // Porta do Railway
