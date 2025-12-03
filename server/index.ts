@@ -184,7 +184,12 @@ const runRenderJob = async (job: RenderJob) => {
     codec: "h264",
     outputLocation: tempOutputPath,
     inputProps: { name: job.name, photoUrl: job.photoUrl },
+
+    // 🔻 CONTROLE DE QUALIDADE / TAMANHO
+    crf: 24,          // 18 = muito pesado, 24 ainda é bonito e bem menor
+    jpegQuality: 70,  // default é ~80 – 70 já ajuda a reduzir um pouco
   });
+
 
   console.log(`📤 Upload do job ${job.id}...`);
   job.status = "uploading";
