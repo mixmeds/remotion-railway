@@ -30,6 +30,7 @@ const {
   R2_SECRET_ACCESS_KEY,
   R2_BUCKET,
   R2_ACCOUNT_ID,
+  R2_PUBLIC_BASE_URL,
 } = process.env;
 
 let r2Client: S3Client | null = null;
@@ -51,8 +52,10 @@ if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET && R2_ACCOUNT_ID) {
 }
 
 const uploadVideoToR2 = async (localFilePath: string, objectKey: string) => {
-  if (!r2Client || !R2_BUCKET || !R2_ACCOUNT_ID) {
-    throw new Error("R2 não está configurado.");
+  if (!r2Client || !R2_BUCKET || !R2_PUBLIC_BASE_URL) {
+    throw new Error(
+      "R2 não está configurado corretamente (verifique R2_BUCKET e R2_PUBLIC_BASE_URL)."
+    );
   }
 
   const fileStream = createReadStream(localFilePath);
@@ -66,7 +69,10 @@ const uploadVideoToR2 = async (localFilePath: string, objectKey: string) => {
 
   await r2Client.send(command);
 
-  const publicUrl = `https://${R2_BUCKET}.${R2_ACCOUNT_ID}.r2.dev/${objectKey}`;
+  // Usa a Public Bucket URL que o painel da Cloudflare mostra (ex.: https://pub-xxxxx.r2.dev)
+  const base = R2_PUBLIC_BASE_URL.replace(/\/+$/, ""); // remove barra final se tiver
+  const publicUrl = `${base}/${objectKey}`;
+
   return publicUrl;
 };
 
@@ -187,7 +193,7 @@ const runRenderJob = async (job: RenderJob) => {
 
   let videoUrl: string;
 
-  if (r2Client && R2_BUCKET && R2_ACCOUNT_ID) {
+  if (r2Client && R2_BUCKET && R2_ACCOUNT_ID && R2_PUBLIC_BASE_URL) {
     const objectKey = `renders/${job.id}.mp4`;
     videoUrl = await uploadVideoToR2(tempOutputPath, objectKey);
     await fsPromises.unlink(tempOutputPath).catch(() => {});
