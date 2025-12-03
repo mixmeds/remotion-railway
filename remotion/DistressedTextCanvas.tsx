@@ -48,7 +48,8 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
     ctx.save();
     ctx.translate(width / 2, height / 2);
 
-    const visibleLength = Math.max(1, Math.floor(text.length * p));
+    const visibleLength =
+      p <= 0 ? 0 : Math.max(1, Math.floor(text.length * p));
     const visibleText = text.slice(0, visibleLength);
 
     ctx.textAlign = "center";
@@ -76,7 +77,13 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
     ctx.filter = "none";
     ctx.fillText(visibleText, jitterX, jitterY);
 
-    // Pequenas manchas / respingos
+    // 🔢 Função pseudo-random determinística (sem flicker)
+    const rand = (seed: number) => {
+      const x = Math.sin(seed * 43758.5453) * 10000;
+      return x - Math.floor(x);
+    };
+
+    // Pequenas manchas / respingos (fixos, só “aparecem” com o progresso)
     const dotsCount = 18;
     for (let i = 0; i < dotsCount; i++) {
       const t = i / dotsCount;
@@ -86,10 +93,16 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
       const dotX = Math.cos(angle) * radius * (0.4 + wobble);
       const dotY = Math.sin(angle * 1.3) * radius * 0.4;
 
-      const alpha = (0.25 + Math.random() * 0.35) * p;
+      const baseSeed = i + text.length * 17;
+      const alphaRand = rand(baseSeed);
+      const sizeRand = rand(baseSeed + 100);
+
+      const alpha = (0.25 + alphaRand * 0.35) * p;
+      const radiusDot = 1.5 + sizeRand * 1.8;
+
       ctx.fillStyle = `rgba(64, 40, 15, ${alpha})`;
       ctx.beginPath();
-      ctx.arc(dotX, dotY, 1.5 + Math.random() * 1.8, 0, Math.PI * 2);
+      ctx.arc(dotX, dotY, radiusDot, 0, Math.PI * 2);
       ctx.fill();
     }
 
