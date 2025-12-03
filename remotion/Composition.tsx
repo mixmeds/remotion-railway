@@ -13,21 +13,16 @@ import {
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
 
+/* ------------ TIPAGEM DOS PROPS ------------ */
+
 export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
 };
 
-/* ------------ TIPAGEM DOS PROPS ------------ */
-
-export type NoelCompProps = {
-  name: string;
-  photoUrl?: string;
-};
-
 /* ------------ MAPA DE FRAMES ------------ */
 
-// POV da carta (onde entra o nome e a foto)
+// POV da carta (onde aparece nome e foto)
 const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
@@ -59,7 +54,8 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
           filter: "brightness(0.5) contrast(1.1)",
         }}
       />
-      {/* overlay âmbar leve por cima da foto */}
+
+      {/* overlay de iluminação quente por cima */}
       <div
         style={{
           position: "absolute",
@@ -73,7 +69,7 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   );
 };
 
-/* ------------ NAME OVERLAY (TEXTO + MAGIA) ------------ */
+/* ------------ NAME OVERLAY / ANIMAÇÃO ------------ */
 
 const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const frame = useCurrentFrame();
@@ -96,25 +92,15 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
     }
   );
 
-  const progress = interpolate(
-    anticipation,
-    [0, 1],
-    [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
+  const progress = interpolate(anticipation, [0, 1], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
-  const opacity = interpolate(
-    rawProgress,
-    [0, 0.04],
-    [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
+  const opacity = interpolate(rawProgress, [0, 0.04], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   return (
     <div
@@ -145,33 +131,28 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   );
 };
 
+/* ------------ URL DO SERVIDOR PARA FALLBACK ------------ */
+
+const SERVER_URL =
+  process.env.SERVER_URL ??
+  "https://remotion-railway-production.up.railway.app";
+
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
-// pode ficar no topo do arquivo Composition.tsx
-const SERVER_URL =
-  process.env.SERVER_URL ?? "https://remotion-railway-production.up.railway.app";
-
 export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
-  // 🔒 Fallbacks seguros
   const safeName = (name ?? "").trim() || "Amigo(a)";
 
-  // Se vier photoUrl no body, usa ela.
-  // Se NÃO vier, usa a do public: /public/photo-placeholder.jpg
   const safePhotoUrl =
-    photoUrl && photoUrl.trim().length > 0
+    photoUrl && photoUrl.trim() !== ""
       ? photoUrl
       : `${SERVER_URL}/photo-placeholder.jpg`;
 
   return (
     <AbsoluteFill>
-      {/* vídeo base com o POV da carta */}
+      {/* vídeo base */}
       <Video src={staticFile("videonoel-h264.mp4")} />
 
-      {/* parte em que a carta está em primeiro plano */}
-      <Sequence
-        from={POV_LETTER_START}
-        durationInFrames={POV_LETTER_DURATION}
-      >
+      <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
         <NameOverlay name={safeName} />
         <PhotoOnLetter photoUrl={safePhotoUrl} />
       </Sequence>

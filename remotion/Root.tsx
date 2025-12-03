@@ -12,7 +12,12 @@ export const RemotionRoot: React.FC = () => {
         height={1080}
         fps={30}
         durationInFrames={1200}
-        defaultProps={undefined}
+        defaultProps={{
+          // Só pra ter algo legal no preview / fallback
+          name: "Amigo(a)",
+          // string vazia => cai no fallback do MyComp (photo-placeholder)
+          photoUrl: "",
+        }}
       />
     </>
   );
