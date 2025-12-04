@@ -10,7 +10,7 @@ import {
   spring,
   interpolate,
   Img,
-  Audio, // 🔊 import do áudio
+  Audio,
 } from "remotion";
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
@@ -25,12 +25,11 @@ export type NoelCompProps = {
 
 /* ------------ MAPA DE FRAMES ------------ */
 
-// POV da carta (onde aparece nome e foto)
 const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
-/* ------------ FOTO SOBRE A CARTA (LAYOUT DO LOCAL) ------------ */
+/* ------------ FOTO SOBRE A CARTA ------------ */
 
 const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   const texture = staticFile("ink-texture.webp");
@@ -39,37 +38,28 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
     <div
       style={{
         position: "absolute",
-
-        // 🔥 POSIÇÃO E DIMENSÕES COPIADAS DO LOCAL
         top: 500,
         left: "50%",
         transform: "translateX(-50%)",
-
         width: 520,
         height: 300,
-
         borderRadius: 18,
         overflow: "hidden",
-
         background: "#dec8a4",
         boxShadow: "0 0 0 2px rgba(80, 50, 20, 0.25)",
       }}
     >
-      {/* FOTO COM FIT CORRETO */}
       <Img
         src={photoUrl}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-
-          // mescla igual ao local (visual old paper)
           mixBlendMode: "multiply",
           filter: "sepia(0.5) contrast(0.95) saturate(0.9)",
         }}
       />
 
-      {/* TEXTURA DO PAPEL SOBRE A FOTO */}
       <div
         style={{
           position: "absolute",
@@ -85,7 +75,7 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   );
 };
 
-/* ------------ NAME OVERLAY (LAYOUT DO LOCAL MANTIDO) ------------ */
+/* ------------ NAME OVERLAY ------------ */
 
 const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const frame = useCurrentFrame();
@@ -122,12 +112,9 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
     <div
       style={{
         position: "absolute",
-
-        // 🔥 POSIÇÃO PERFEITA E COMPATÍVEL COM O LAYOUT LOCAL
         top: 260,
         left: "50%",
         transform: "translateX(-50%)",
-
         pointerEvents: "none",
         background: "transparent",
         zIndex: 10,
@@ -173,7 +160,6 @@ export const MyComp: React.FC<NoelCompProps> = ({
   const safeAudioSrc =
     audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
 
-  // 🔍 Log para confirmar se o áudio está chegando na composição
   console.log(
     "🎧 [MyComp] props recebidos:",
     JSON.stringify(
@@ -191,18 +177,12 @@ export const MyComp: React.FC<NoelCompProps> = ({
 
   return (
     <AbsoluteFill>
-      {/* vídeo base */}
-      <Video src={staticFile("videonoel-h264.mp4")} volume={0} />
+      {/* vídeo base (sem áudio próprio) */}
+      <Video src={staticFile("videonoel-h264.mp4")} muted />
 
       {/* trecho POV da carta: nome + foto + ÁUDIO */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {safeAudioSrc && (
-          <Audio
-            src={safeAudioSrc}
-            // se quiser, dá pra ajustar volume aqui:
-            // volume={1}
-          />
-        )}
+        {safeAudioSrc && <Audio src={safeAudioSrc} />}
         <NameOverlay name={safeName} />
         <PhotoOnLetter photoUrl={safePhotoUrl} />
       </Sequence>

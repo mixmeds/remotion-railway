@@ -24,7 +24,7 @@ if (!fs.existsSync(rendersDir)) {
   fs.mkdirSync(rendersDir, { recursive: true });
 }
 
-// Servir os arquivos locais (áudio temporário, vídeo temporário se quiser testar)
+// Servir arquivos estáticos em /renders (útil para debug)
 app.use("/renders", express.static(rendersDir));
 
 /* -------------------------------------------------------------------------- */
@@ -43,8 +43,12 @@ const {
 } = process.env;
 
 if (!SERVER_URL) {
-  console.warn("⚠️ SERVER_URL não definido. Ex: https://meuapp.railway.app");
+  console.warn(
+    "⚠️ SERVER_URL não definido. Ex: https://meuapp.railway.app"
+  );
 }
+
+const SERVER_BASE = (SERVER_URL ?? "").replace(/\/$/, "");
 
 /* -------------------------------------------------------------------------- */
 /*                               CONFIG R2                                     */
@@ -66,9 +70,15 @@ if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET && R2_ACCOUNT_ID) {
   console.warn("⚠️ R2 não configurado. Upload para R2 será ignorado.");
 }
 
-const uploadToR2 = async (filePath: string, objectKey: string, mime: string) => {
+const uploadToR2 = async (
+  filePath: string,
+  objectKey: string,
+  mime: string
+): Promise<string> => {
   if (!r2Client || !R2_BUCKET || !R2_PUBLIC_BASE_URL) {
-    console.warn("⚠️ uploadToR2 chamado, mas R2 não está totalmente configurado.");
+    console.warn(
+      "⚠️ uploadToR2 chamado, mas R2 não está totalmente configurado."
+    );
     return "";
   }
 
@@ -112,15 +122,17 @@ const getBundledLocation = async () => {
 /* -------------------------------------------------------------------------- */
 
 const buildNoelLine = (name: string) => {
-  const safeName = name.trim() || "meu amigo";
-  // Texto simples
+  const safeName = name?.trim() || "meu amigo";
   return `${safeName}, você é alguém muito especial… mais do que imagina.`;
 };
 
-const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
+const generateNoelAudio = async (
+  jobId: string,
+  name: string
+): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
   if (!ELEVENLABS_VOICE_ID) throw new Error("ELEVENLABS_VOICE_ID não configurada.");
-  if (!SERVER_URL) throw new Error("SERVER_URL não configurada.");
+  if (!SERVER_BASE) throw new Error("SERVER_URL/SERVER_BASE não configurado.");
 
   const text = buildNoelLine(name);
   console.log(`🗣️ Gerando áudio ElevenLabs para "${name}"...`);
@@ -153,14 +165,13 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
   const mp3Buffer = Buffer.from(await res.arrayBuffer());
   const localAudioPath = path.join(rendersDir, `audio-${jobId}.mp3`);
 
-  // salva local (usado pelo Remotion)
+  // salva local (usado pelo Remotion via rota /audio/:id)
   await fsPromises.writeFile(localAudioPath, mp3Buffer);
 
-  // monta URL local que o Chrome do Remotion vai acessar
-  const baseServer = SERVER_URL.replace(/\/$/, "");
-  const localAudioUrl = `${baseServer}/renders/audio-${jobId}.mp3`;
+  // rota interna que o Chromium do Remotion vai consumir
+  const localAudioUrl = `${SERVER_BASE}/audio/${jobId}`;
 
-  // tenta subir pro R2 só para persistir (não dependemos disso pro render)
+  // upload para R2 apenas para persistência (não usado pelo render)
   try {
     const objectKey = `audios/${jobId}.mp3`;
     const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/mpeg");
@@ -168,12 +179,58 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
       console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
     }
   } catch (err) {
-    console.error("⚠️ Falha ao enviar áudio para R2 (seguindo só com o local):", err);
+    console.error(
+      "⚠️ Falha ao enviar áudio para R2 (seguindo só com o local):",
+      err
+    );
   }
 
-  console.log(`🎧 Áudio local para render (será usado no <Audio />): ${localAudioUrl}`);
-  return localAudioUrl; // <- É ESSA URL que vai para o Audio src no Remotion
+  console.log(
+    `🎧 Áudio local para render (rota interna /audio): ${localAudioUrl}`
+  );
+
+  return localAudioUrl; // <- ESSA URL vai para o <Audio src={audioSrc}>
 };
+
+/* -------------------------------------------------------------------------- */
+/*                              ROTA /audio/:id                                */
+/*   Stream de áudio local com Accept-Ranges (ideal para Chromium/Remotion)   */
+/* -------------------------------------------------------------------------- */
+
+app.get("/audio/:id", (req, res) => {
+  const jobId = req.params.id;
+  const audioPath = path.join(rendersDir, `audio-${jobId}.mp3`);
+
+  if (!fs.existsSync(audioPath)) {
+    return res.status(404).send("Audio not found");
+  }
+
+  const stat = fs.statSync(audioPath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Content-Type", "audio/mpeg");
+
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunkSize = end - start + 1;
+
+    const file = fs.createReadStream(audioPath, { start, end });
+    res.writeHead(206, {
+      "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": chunkSize,
+      "Content-Type": "audio/mpeg",
+    });
+    file.pipe(res);
+  } else {
+    res.setHeader("Content-Length", fileSize.toString());
+    fs.createReadStream(audioPath).pipe(res);
+  }
+});
 
 /* -------------------------------------------------------------------------- */
 /*                              FILA DE RENDER                                 */
@@ -268,12 +325,12 @@ const runRenderJob = async (job: RenderJob) => {
     serveUrl,
     composition,
     codec: "h264",
-    audioCodec: "aac", // 🔊 garante trilha de áudio
+    audioCodec: "aac",
     outputLocation: tempOutput,
     inputProps: {
       name: job.name,
       photoUrl: job.photoUrl,
-      audioSrc, // 🔊 passa o áudio dinâmico para o Remotion
+      audioSrc, // 🔊 passa URL /audio/:id para o Remotion
     },
     crf: 24,
     jpegQuality: 70,
@@ -291,9 +348,10 @@ const runRenderJob = async (job: RenderJob) => {
   // limpa arquivo de vídeo local
   fs.unlink(tempOutput, () => {});
 
-  // limpa áudio local depois que já foi usado
-  const localAudioPath = path.join(rendersDir, `audio-${job.id}.mp3`);
-  fs.unlink(localAudioPath, () => {});
+  // mantém o áudio local até ter certeza que não vai precisar re-renderizar
+  // (se quiser apagar aqui, pode descomentar:)
+  // const localAudioPath = path.join(rendersDir, `audio-${job.id}.mp3`);
+  // fs.unlink(localAudioPath, () => {});
 
   job.status = "done";
   job.videoUrl = videoUrl;
@@ -315,7 +373,9 @@ app.post("/render", (req, res) => {
   const { name, photoUrl } = req.body as { name?: string; photoUrl?: string };
 
   if (!name || !photoUrl) {
-    return res.status(400).json({ ok: false, error: "Envie name e photoUrl." });
+    return res
+      .status(400)
+      .json({ ok: false, error: "Envie name e photoUrl." });
   }
 
   const jobId = randomUUID();
