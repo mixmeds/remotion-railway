@@ -9,6 +9,7 @@ import {
   spring,
   interpolate,
   Img,
+  Audio, // 🔊 import do áudio
 } from "remotion";
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
@@ -18,6 +19,7 @@ import { DistressedNameCanvas } from "./DistressedTextCanvas";
 export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
+  audioSrc?: string; // 🔊 áudio dinâmico (ElevenLabs)
 };
 
 /* ------------ MAPA DE FRAMES ------------ */
@@ -155,7 +157,11 @@ const SERVER_URL =
 
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
-export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
+export const MyComp: React.FC<NoelCompProps> = ({
+  name,
+  photoUrl,
+  audioSrc,
+}) => {
   const safeName = (name ?? "").trim() || "Amigo(a)";
 
   const safePhotoUrl =
@@ -163,12 +169,17 @@ export const MyComp: React.FC<NoelCompProps> = ({ name, photoUrl }) => {
       ? photoUrl
       : `${SERVER_URL}/photo-placeholder.jpg`;
 
+  const safeAudioSrc =
+    audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
+
   return (
     <AbsoluteFill>
       {/* vídeo base */}
       <Video src={staticFile("videonoel-h264.mp4")} />
 
+      {/* trecho POV da carta: nome + foto + ÁUDIO */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
+        {safeAudioSrc && <Audio src={safeAudioSrc} />} {/* 🔊 só aqui */}
         <NameOverlay name={safeName} />
         <PhotoOnLetter photoUrl={safePhotoUrl} />
       </Sequence>
