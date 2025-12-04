@@ -14,11 +14,12 @@ app.use(express.json());
 // Servir /public (ink-texture.webp, photo-placeholder.jpg, etc.)
 app.use(express.static(path.join(process.cwd(), "public")));
 
-// Diretório para salvar os vídeos e áudios localmente (fallback)
+// Diretório para salvar os vídeos e áudios localmente
 const rendersDir = path.join(process.cwd(), "renders");
 if (!fs.existsSync(rendersDir)) {
   fs.mkdirSync(rendersDir, { recursive: true });
 }
+// expõe /renders para o Chrome do Remotion
 app.use("/renders", express.static(rendersDir));
 
 /* -------------------------------------------------------------------------- */
@@ -38,7 +39,7 @@ const {
 
 if (!SERVER_URL) {
   console.warn(
-    "⚠️ SERVER_URL não definida. Ex: https://meuapp.railway.app (necessário para servir /renders)"
+    "⚠️ SERVER_URL não definido. Defina ex: https://meuapp.railway.app"
   );
 }
 
@@ -68,7 +69,10 @@ const uploadToR2 = async (
   mime: string
 ) => {
   if (!r2Client || !R2_BUCKET || !R2_PUBLIC_BASE_URL) {
-    throw new Error("R2 não configurado corretamente.");
+    console.warn(
+      "⚠️ uploadToR2 chamado, mas R2 não está totalmente configurado."
+    );
+    return "";
   }
 
   const fileStream = createReadStream(localFilePath);
@@ -87,21 +91,20 @@ const uploadToR2 = async (
 };
 
 /* -------------------------------------------------------------------------- */
-/*                               BUNDLE REMOTION                               */
+/*                        BUNDLE REMOTION (CACHEADO)                           */
 /* -------------------------------------------------------------------------- */
 
 let bundledLocation: string | null = null;
 
 const getBundledLocation = async () => {
-  if (bundledLocation) {
-    return bundledLocation;
-  }
+  if (bundledLocation) return bundledLocation;
 
-  console.log("📦 Gerando bundle do Remotion...");
+  console.log("📦 Gerando bundle do Remotion.");
   bundledLocation = await bundle({
     entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
     webpackOverride: (config) => config,
   });
+
   console.log("✅ Bundle pronto");
   return bundledLocation;
 };
@@ -120,12 +123,11 @@ const generateNoelAudio = async (
   name: string
 ): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
-  if (!ELEVENLABS_VOICE_ID)
-    throw new Error("ELEVENLABS_VOICE_ID não configurada.");
-  if (!SERVER_URL)
-    throw new Error("SERVER_URL não configurada (necessário para /renders).");
+  if (!ELEVENLABS_VOICE_ID) throw new Error("ELEVENLABS_VOICE_ID não configurada.");
+  if (!SERVER_URL) throw new Error("SERVER_URL não configurada.");
 
   const text = buildNoelLine(name);
+  console.log(`🗣️ Gerando áudio ElevenLabs para "${name}".`);
 
   const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`;
 
@@ -155,41 +157,46 @@ const generateNoelAudio = async (
   const mp3Buffer = Buffer.from(await res.arrayBuffer());
   const localAudioPath = path.join(rendersDir, `audio-${jobId}.mp3`);
 
-  // salva local
+  // salva local (usado pelo Remotion)
   await fsPromises.writeFile(localAudioPath, mp3Buffer);
 
-  // sobe pro R2 só pra persistir (não dependemos disso pro render)
+  // monta URL local que o Chrome do Remotion vai acessar
+  const baseServer = SERVER_URL.replace(/\/$/, "");
+  const localAudioUrl = `${baseServer}/renders/audio-${jobId}.mp3`;
+
+  // tenta subir pro R2 só para persistir (não dependemos disso pro render)
   try {
     const objectKey = `audios/${jobId}.mp3`;
     const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/mpeg");
-    console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
+    if (audioUrlR2) {
+      console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
+    }
   } catch (err) {
-    console.error("⚠️ Falha ao enviar áudio para R2 (seguindo mesmo assim):", err);
+    console.error(
+      "⚠️ Falha ao enviar áudio para R2 (seguindo só com o local):",
+      err
+    );
   }
 
-  // URL local que o Chromium do Remotion vai acessar
-  const baseServer = SERVER_URL.replace(/\/$/, "");
-  const localAudioUrl = `${baseServer}/renders/audio-${jobId}.mp3`;
   console.log(`🎧 Áudio local para render: ${localAudioUrl}`);
-
-  return localAudioUrl;
+  return localAudioUrl; // <- ESSA URL vai para o Audio src no Remotion
 };
 
 /* -------------------------------------------------------------------------- */
-/*                              TIPAGEM / FILA                                 */
+/*                              FILA DE RENDER                                 */
 /* -------------------------------------------------------------------------- */
 
-type JobStatus = "queued" | "rendering" | "uploading" | "done" | "error";
+type RenderStatus = "queued" | "processing" | "uploading" | "done" | "error";
 
 type RenderJob = {
   id: string;
   name: string;
   photoUrl: string;
-  status: JobStatus;
-  videoUrl?: string;
-  error?: string;
+  status: RenderStatus;
   createdAt: string;
   updatedAt: string;
+  videoUrl?: string;
+  error?: string;
 };
 
 const jobs = new Map<string, RenderJob>();
@@ -198,9 +205,11 @@ let isProcessing = false;
 
 const nowISO = () => new Date().toISOString();
 
-/* -------------------------------------------------------------------------- */
-/*                                FILA                                         */
-/* -------------------------------------------------------------------------- */
+const enqueueJob = (job: RenderJob) => {
+  jobs.set(job.id, job);
+  queue.push(job.id);
+  processQueue();
+};
 
 const processQueue = async () => {
   if (isProcessing) return;
@@ -211,9 +220,12 @@ const processQueue = async () => {
   if (!job) return;
 
   isProcessing = true;
+  job.status = "processing";
+  job.updatedAt = nowISO();
+  jobs.set(job.id, job);
 
   try {
-    console.log(`📀 Processando job ${job.id}...`);
+    console.log(`🎬 Processando job ${job.id}.`);
     await runRenderJob(job);
   } catch (err: any) {
     console.error("❌ Erro ao processar job:", err);
@@ -222,62 +234,59 @@ const processQueue = async () => {
   } finally {
     job.updatedAt = nowISO();
     jobs.set(job.id, job);
-    isProcessing = false;
 
-    if (queue.length > 0) {
-      processQueue();
-    }
+    isProcessing = false;
+    if (queue.length > 0) processQueue();
   }
 };
 
-const enqueueJob = (job: RenderJob) => {
-  jobs.set(job.id, job);
-  queue.push(job.id);
-  processQueue();
-};
-
 /* -------------------------------------------------------------------------- */
-/*                               RENDER JOB                                    */
+/*                                RENDER JOB                                   */
 /* -------------------------------------------------------------------------- */
 
 const runRenderJob = async (job: RenderJob) => {
   const serveUrl = await getBundledLocation();
 
+  console.log("🔁 Lendo composições Remotion...");
   const comps = await getCompositions(serveUrl, {
     inputProps: { name: job.name, photoUrl: job.photoUrl },
   });
 
   const composition = comps.find((c) => c.id === "noel");
-  if (!composition) throw new Error("Composição 'noel' não encontrada.");
+  if (!composition) {
+    throw new Error("Composição 'noel' não encontrada.");
+  }
 
-  // 🔊 gerar áudio
+  console.log("🎧 Gerando áudio dinâmico para o render...");
   const audioSrc = await generateNoelAudio(job.id, job.name);
 
-  const tempOutput = path.join("/tmp", `${job.id}.mp4`);
+  const tempOutput = path.join(rendersDir, `render-${job.id}.mp4`);
 
-  job.status = "rendering";
-  job.updatedAt = nowISO();
-  jobs.set(job.id, job);
-
-  // DEBUG: logar o audioSrc que vai pra composição
-  console.log("🎧 Chamando renderMedia com audioSrc:", audioSrc);
+  console.log("🎞️ Iniciando render do Remotion.", {
+    serveUrl,
+    compId: composition.id,
+    jobId: job.id,
+    name: job.name,
+    photoUrl: job.photoUrl,
+    audioSrc,
+  });
 
   await renderMedia({
     serveUrl,
     composition,
     codec: "h264",
+    audioCodec: "aac", // 🔊 garante trilha de áudio
     outputLocation: tempOutput,
     inputProps: {
       name: job.name,
       photoUrl: job.photoUrl,
-      audioSrc, // 🔊 passa o áudio para o Remotion
+      audioSrc, // 🔊 passa o áudio dinâmico para o Remotion
     },
     crf: 24,
     jpegQuality: 70,
-    audioCodec: "aac",
-    muted: false,
-    dumpBrowserLogs: true,
   });
+
+  console.log("✅ Render Remotion finalizado, iniciando upload do vídeo.");
 
   job.status = "uploading";
   job.updatedAt = nowISO();
@@ -286,7 +295,12 @@ const runRenderJob = async (job: RenderJob) => {
   const objectKey = `renders/${job.id}.mp4`;
   const videoUrl = await uploadToR2(tempOutput, objectKey, "video/mp4");
 
+  // limpa arquivo de vídeo local
   fs.unlink(tempOutput, () => {});
+
+  // limpa áudio local depois que já foi usado
+  const localAudioPath = path.join(rendersDir, `audio-${job.id}.mp3`);
+  fs.unlink(localAudioPath, () => {});
 
   job.status = "done";
   job.videoUrl = videoUrl;
@@ -301,38 +315,32 @@ const runRenderJob = async (job: RenderJob) => {
 /* -------------------------------------------------------------------------- */
 
 app.get("/", (_req, res) => {
-  res.json({ ok: true, message: "API Remotion Railway up" });
+  res.json({ ok: true, message: "API funcionando." });
 });
 
 app.post("/render", (req, res) => {
-  const { name, photoUrl } = req.body as {
-    name?: string;
-    photoUrl?: string;
-  };
+  const { name, photoUrl } = req.body as { name?: string; photoUrl?: string };
 
   if (!name || !photoUrl) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "Envie name e photoUrl no body" });
+    return res.status(400).json({ ok: false, error: "Envie name e photoUrl." });
   }
 
-  const id = randomUUID();
+  const jobId = randomUUID();
   const now = nowISO();
 
   const job: RenderJob = {
-    id,
-    name,
-    photoUrl,
+    id: jobId,
+    name: name.trim(),
+    photoUrl: photoUrl.trim(),
     status: "queued",
     createdAt: now,
     updatedAt: now,
   };
 
-  console.log(`🧾 Novo job enfileirado: ${id} (name="${name}")`);
-
+  console.log(`🧾 Novo job enfileirado: ${jobId} (name="${job.name}")`);
   enqueueJob(job);
 
-  res.json({ ok: true, jobId: id });
+  res.json({ ok: true, jobId });
 });
 
 app.get("/job/:id", (req, res) => {
