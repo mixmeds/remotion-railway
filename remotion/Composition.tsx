@@ -5,145 +5,76 @@ import {
   Video,
   staticFile,
   Sequence,
-  useCurrentFrame,
-  useVideoConfig,
-  spring,
-  interpolate,
   Img,
-  Html5Audio,
+  Audio,
 } from "remotion";
-
-import { DistressedNameCanvas } from "./DistressedTextCanvas";
-
-/* ------------ TIPAGEM DOS PROPS ------------ */
 
 export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
-  audioSrc?: string; // 🔊 áudio dinâmico (ElevenLabs)
+  audioSrc?: string;
 };
 
-/* ------------ MAPA DE FRAMES ------------ */
-
+// Janela em que o POV da carta aparece no vídeo base
 const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
-/* ------------ FOTO SOBRE A CARTA ------------ */
-
-const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
-  const texture = staticFile("ink-texture.webp");
-
+// Overlay simples do nome
+const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   return (
-    <div
+    <AbsoluteFill
       style={{
-        position: "absolute",
-        top: 500,
-        left: "50%",
-        transform: "translateX(-50%)",
-        width: 520,
-        height: 300,
-        borderRadius: 18,
-        overflow: "hidden",
-        background: "#dec8a4",
-        boxShadow: "0 0 0 2px rgba(80, 50, 20, 0.25)",
+        justifyContent: "center",
+        alignItems: "center",
+        pointerEvents: "none",
       }}
     >
-      <Img
-        src={photoUrl}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          mixBlendMode: "multiply",
-          filter: "sepia(0.5) contrast(0.95) saturate(0.9)",
-        }}
-      />
-
       <div
         style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: `url(${texture})`,
-          backgroundSize: "cover",
-          mixBlendMode: "soft-light",
-          opacity: 0.6,
-          pointerEvents: "none",
+          fontFamily: "serif",
+          fontSize: 70,
+          color: "#3b2a1a",
+          textShadow: "0 2px 4px rgba(0,0,0,0.4)",
         }}
-      />
-    </div>
+      >
+        {name}
+      </div>
+    </AbsoluteFill>
   );
 };
 
-/* ------------ NAME OVERLAY ------------ */
-
-const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  const rawProgress = spring({
-    frame,
-    fps,
-    config: { damping: 22, stiffness: 80, mass: 1.2 },
-    durationInFrames: 70,
-  });
-
-  const anticipation = interpolate(
-    rawProgress,
-    [0, 0.08, 0.2, 1],
-    [0, -0.03, 0.05, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
-
-  const progress = interpolate(anticipation, [0, 1], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  const opacity = interpolate(rawProgress, [0, 0.04], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
+// Overlay simples da foto
+const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   return (
-    <div
+    <AbsoluteFill
       style={{
-        position: "absolute",
-        top: 260,
-        left: "50%",
-        transform: "translateX(-50%)",
+        justifyContent: "center",
+        alignItems: "center",
         pointerEvents: "none",
-        background: "transparent",
-        zIndex: 10,
-        opacity,
       }}
     >
-      <DistressedNameCanvas
-        text={name}
-        progress={progress}
-        width={900}
-        height={300}
-        fontSize={86}
-        textColor="#301b05"
-        glowColor="#f5e5b2"
-        roughness={0.5}
-        wobble={0.6}
-        inkBleed={0.9}
-      />
-    </div>
+      <div
+        style={{
+          width: 420,
+          height: 420,
+          borderRadius: 24,
+          overflow: "hidden",
+          boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+        }}
+      >
+        <Img
+          src={photoUrl}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+      </div>
+    </AbsoluteFill>
   );
 };
-
-/* ------------ URL DO SERVIDOR PARA FALLBACK DA FOTO ------------ */
-
-const SERVER_URL =
-  process.env.SERVER_URL ??
-  "https://remotion-railway-production.up.railway.app";
-
-/* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
 export const MyComp: React.FC<NoelCompProps> = (props) => {
   const { name, photoUrl, audioSrc } = props;
@@ -152,40 +83,28 @@ export const MyComp: React.FC<NoelCompProps> = (props) => {
 
   const safePhotoUrl =
     photoUrl && photoUrl.trim() !== ""
-      ? photoUrl
-      : `${SERVER_URL.replace(/\/$/, "")}/photo-placeholder.jpg`;
+      ? photoUrl.trim()
+      : staticFile("photo-placeholder.png");
 
+  // 🔊 NÃO FAZ NENHUMA MÁGICA AQUI: se veio string, usa.
   const safeAudioSrc =
     typeof audioSrc === "string" && audioSrc.trim() !== ""
       ? audioSrc.trim()
       : undefined;
 
   console.log(
-    "🎧 [MyComp] RAW props:",
+    "🎧 [MyComp] props:",
     JSON.stringify(
       {
-        name,
-        photoUrl,
-        audioSrcType: typeof audioSrc,
-        audioSrcSnippet:
-          typeof audioSrc === "string" ? audioSrc.slice(0, 80) + "..." : audioSrc,
-      },
-      null,
-      2
-    )
-  );
-
-  console.log(
-    "🎧 [MyComp] props normalizados:",
-    JSON.stringify(
-      {
-        safeName,
+        name: safeName,
         hasPhoto: !!photoUrl,
-        safePhotoUrl,
+        photoUrl: safePhotoUrl,
+        audioSrcType: typeof audioSrc,
         hasAudioSrc: !!safeAudioSrc,
-        safeAudioSrcSnippet: safeAudioSrc
-          ? safeAudioSrc.slice(0, 80) + "..."
-          : null,
+        audioSrcSnippet:
+          typeof audioSrc === "string"
+            ? audioSrc.slice(0, 80) + "..."
+            : audioSrc,
       },
       null,
       2
@@ -194,12 +113,12 @@ export const MyComp: React.FC<NoelCompProps> = (props) => {
 
   return (
     <AbsoluteFill>
-      {/* vídeo base (sem áudio próprio) */}
-      <Video src={staticFile("videonoel-h264.mp4")} muted />
+      {/* vídeo base com a música de fundo já embutida */}
+      <Video src={staticFile("videonoel-h264.mp4")} />
 
-      {/* trecho POV da carta: nome + foto + ÁUDIO */}
+      {/* trecho onde o nome/foto/áudio aparecem */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {safeAudioSrc && <Html5Audio src={safeAudioSrc} />}
+        {safeAudioSrc && <Audio src={safeAudioSrc} />}
         <NameOverlay name={safeName} />
         <PhotoOnLetter photoUrl={safePhotoUrl} />
       </Sequence>
