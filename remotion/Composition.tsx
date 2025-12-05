@@ -4,163 +4,185 @@ import {
   Video,
   staticFile,
   Sequence,
+  useCurrentFrame,
   useVideoConfig,
-  Audio,
+  spring,
+  interpolate,
+  Img,
+  Audio, // 🔊 import do áudio
 } from "remotion";
+
+import { DistressedNameCanvas } from "./DistressedTextCanvas";
+
+/* ------------ TIPAGEM DOS PROPS ------------ */
+
+export type NoelCompProps = {
+  name?: string;
+  photoUrl?: string;
+  audioSrc?: string; // 🔊 áudio dinâmico (ElevenLabs)
+};
 
 /* ------------ MAPA DE FRAMES ------------ */
 
+// POV da carta (onde aparece nome e foto)
 const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
-const PHOTO_ON_LETTER_START = POV_LETTER_START + 5;
-const PHOTO_ON_LETTER_END = POV_LETTER_END - 10;
+/* ------------ FOTO SOBRE A CARTA (LAYOUT DO LOCAL) ------------ */
 
-const AUDIO_START_FRAME = POV_LETTER_START + 10;
+const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
+  const texture = staticFile("ink-texture.webp");
 
-/* ------------ TIPOS ------------ */
-
-export type NoelCompProps = {
-  name: string;
-  photoUrl?: string;
-  hasPhoto?: boolean;
-  audioSrc?: string; // data:audio/mpeg;base64,...
-};
-
-/* ------------ OVERLAYS ------------ */
-
-const LetterOverlayName: React.FC<{ name: string }> = ({ name }) => {
   return (
     <div
       style={{
         position: "absolute",
-        top: "54%",
+
+        // 🔥 POSIÇÃO E DIMENSÕES COPIADAS DO LOCAL
+        top: 500,
         left: "50%",
         transform: "translateX(-50%)",
-        fontSize: 64,
-        fontFamily: "Great Vibes, cursive",
-        color: "#2b1408",
-        textShadow: "0 2px 3px rgba(0,0,0,0.3)",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {name}
-    </div>
-  );
-};
 
-const LetterOverlayPhoto: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: "40%",
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        width: 380,
-        height: 380,
-        borderRadius: 24,
+        width: 520,
+        height: 300,
+
+        borderRadius: 18,
         overflow: "hidden",
-        boxShadow: "0 12px 40px rgba(0,0,0,0.6)",
-        border: "6px solid rgba(255,255,255,0.8)",
-        backgroundColor: "#1a1a1a",
+
+        background: "#dec8a4",
+        boxShadow: "0 0 0 2px rgba(80, 50, 20, 0.25)",
       }}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      {/* FOTO COM FIT CORRETO */}
+      <Img
         src={photoUrl}
-        alt="Foto da criança"
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          display: "block",
+
+          // mescla igual ao local (visual old paper)
+          mixBlendMode: "multiply",
+          filter: "sepia(0.5) contrast(0.95) saturate(0.9)",
+        }}
+      />
+
+      {/* TEXTURA DO PAPEL SOBRE A FOTO */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          backgroundImage: `url(${texture})`,
+          backgroundSize: "cover",
+          mixBlendMode: "soft-light",
+          opacity: 0.6,
+          pointerEvents: "none",
         }}
       />
     </div>
   );
 };
 
-/* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
+/* ------------ NAME OVERLAY (LAYOUT DO LOCAL MANTIDO) ------------ */
 
-export const MyComp: React.FC<NoelCompProps> = (props) => {
-  const { durationInFrames, fps } = useVideoConfig();
+const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
 
-  // Normalização simples, SEM frescura
-  const safeName =
-    typeof props.name === "string" && props.name.trim().length > 0
-      ? props.name.trim()
-      : "Amigo Especial";
+  const rawProgress = spring({
+    frame,
+    fps,
+    config: { damping: 22, stiffness: 80, mass: 1.2 },
+    durationInFrames: 70,
+  });
 
-  const safePhotoUrl =
-    typeof props.photoUrl === "string" && props.photoUrl.trim().length > 0
-      ? props.photoUrl.trim()
-      : undefined;
+  const anticipation = interpolate(
+    rawProgress,
+    [0, 0.08, 0.2, 1],
+    [0, -0.03, 0.05, 1],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }
+  );
 
-  const safeAudioSrc =
-    typeof props.audioSrc === "string" && props.audioSrc.trim().length > 0
-      ? props.audioSrc.trim()
-      : undefined;
+  const progress = interpolate(anticipation, [0, 1], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
-  if (typeof window === "undefined") {
-    console.log("[MyComp] props recebidos:", {
-      name: safeName,
-      hasPhoto: !!safePhotoUrl,
-      photoUrlSnippet: safePhotoUrl
-        ? safePhotoUrl.substring(0, 60) + "..."
-        : null,
-      hasAudioSrc: !!safeAudioSrc,
-      audioSrcIsDataUri: safeAudioSrc?.startsWith("data:audio") ?? false,
-      fps,
-      durationInFrames,
-    });
-  }
+  const opacity = interpolate(rawProgress, [0, 0.04], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "black" }}>
-      {/* Vídeo base (SEM áudio próprio) */}
-      <Video
-        src={staticFile("videonoel-h264.mp4")}
-        startFrom={0}
-        endAt={durationInFrames}
-        muted // importantíssimo: só o áudio dinâmico toca
-        style={{ width: "100%", height: "100%" }}
+    <div
+      style={{
+        position: "absolute",
+
+        // 🔥 POSIÇÃO PERFETA E COMPATÍVEL COM O LAYOUT LOCAL
+        top: 260,
+        left: "50%",
+        transform: "translateX(-50%)",
+
+        pointerEvents: "none",
+        background: "transparent",
+        zIndex: 10,
+        opacity,
+      }}
+    >
+      <DistressedNameCanvas
+        text={name}
+        progress={progress}
+        width={900}
+        height={300}
+        fontSize={86}
+        textColor="#301b05"
+        glowColor="#f5e5b2"
+        roughness={0.5}
+        wobble={0.6}
+        inkBleed={0.9}
       />
-
-      {/* Nome na carta */}
-      <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        <LetterOverlayName name={safeName} />
-      </Sequence>
-
-      {/* Foto em cima da carta */}
-      {safePhotoUrl && (
-        <Sequence
-          from={PHOTO_ON_LETTER_START}
-          durationInFrames={PHOTO_ON_LETTER_END - PHOTO_ON_LETTER_START}
-        >
-          <LetterOverlayPhoto photoUrl={safePhotoUrl} />
-        </Sequence>
-      )}
-
-      {/* Áudio dinâmico */}
-      {safeAudioSrc && (
-        <Sequence from={AUDIO_START_FRAME}>
-          <Audio src={safeAudioSrc} />
-        </Sequence>
-      )}
-    </AbsoluteFill>
+    </div>
   );
 };
 
-/* ------------ ROOT REMOTION ------------ */
+/* ------------ URL DO SERVIDOR PARA FALLBACK ------------ */
 
-export const RemotionRoot: React.FC = () => {
+const SERVER_URL =
+  process.env.SERVER_URL ??
+  "https://remotion-railway-production.up.railway.app";
+
+/* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
+
+export const MyComp: React.FC<NoelCompProps> = ({
+  name,
+  photoUrl,
+  audioSrc,
+}) => {
+  const safeName = (name ?? "").trim() || "Amigo(a)";
+
+  const safePhotoUrl =
+    photoUrl && photoUrl.trim() !== ""
+      ? photoUrl
+      : `${SERVER_URL}/photo-placeholder.jpg`;
+
+  const safeAudioSrc =
+    audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
+
   return (
-    <>
-      <AbsoluteFill>
-        {/* apenas pra registrar a composição */}
-      </AbsoluteFill>
-    </>
+    <AbsoluteFill>
+      {/* vídeo base */}
+      <Video src={staticFile("videonoel-h264.mp4")} volume={0} />
+
+      {/* trecho POV da carta: nome + foto + ÁUDIO */}
+      <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
+        {safeAudioSrc && <Audio src={safeAudioSrc} />} {/* 🔊 só aqui */}
+        <NameOverlay name={safeName} />
+        <PhotoOnLetter photoUrl={safePhotoUrl} />
+      </Sequence>
+    </AbsoluteFill>
   );
 };
