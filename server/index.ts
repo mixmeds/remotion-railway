@@ -11,7 +11,7 @@ import fetch from "node-fetch";
 // -------------------- CONFIG BÁSICA --------------------
 
 const PORT = process.env.PORT || 8080;
-const ENTRY = path.join(process.cwd(), "src", "index.tsx");
+const ENTRY = path.join(process.cwd(), "remotion", "index.tsx");
 const OUT_DIR = path.join(os.tmpdir(), "renders");
 
 if (!fs.existsSync(OUT_DIR)) {
