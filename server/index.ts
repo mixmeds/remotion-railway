@@ -196,6 +196,7 @@ type RenderJob = {
   updatedAt: string;
   videoUrl?: string;
   error?: string;
+  audioSrc?: string
 };
 
 const jobs = new Map<string, RenderJob>();

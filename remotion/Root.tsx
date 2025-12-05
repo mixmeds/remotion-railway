@@ -17,6 +17,7 @@ export const RemotionRoot: React.FC = () => {
           name: "Amigo(a)",
           // string vazia => cai no fallback do MyComp (photo-placeholder)
           photoUrl: "",
+          audioSrc: "",
         }}
       />
     </>

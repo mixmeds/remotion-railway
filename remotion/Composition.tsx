@@ -178,7 +178,7 @@ export const MyComp: React.FC<NoelCompProps> = ({
   return (
     <AbsoluteFill>
       {/* vídeo base (sem áudio próprio) */}
-      <Video src={staticFile("videonoel-h264.mp4")} muted />
+      <Video src={staticFile("videonoel-h264.mp4")} />
 
       {/* trecho POV da carta: nome + foto + ÁUDIO */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
