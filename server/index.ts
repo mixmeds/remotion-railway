@@ -153,11 +153,12 @@ const generateNoelAudio = async (
 
   const mp3Buffer = Buffer.from(await res.arrayBuffer());
 
-  // 🔊 1) Gera URL base64 para o Remotion (sem depender de rede)
+  // 🔊 Monta data URL como fallback (caso R2 não esteja disponível)
   const base64 = mp3Buffer.toString("base64");
   const dataUrl = `data:audio/mpeg;base64,${base64}`;
+  let playbackUrl = dataUrl;
 
-  // (Opcional) salvar local + enviar pro R2 só pra debug/histórico
+  // 💾 Salva localmente e tenta enviar para o R2 para ter uma URL HTTP pública
   try {
     const localAudioPath = path.join(rendersDir, `audio-${jobId}.mp3`);
     await fsPromises.writeFile(localAudioPath, mp3Buffer);
@@ -166,19 +167,23 @@ const generateNoelAudio = async (
     const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/mpeg");
     if (audioUrlR2) {
       console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
+      playbackUrl = audioUrlR2;
     }
   } catch (err) {
     console.error(
-      "⚠️ Falha ao salvar/enviar áudio para R2 (seguindo só com base64):",
+      "⚠️ Falha ao salvar/enviar áudio para R2 (usando apenas base64 no Remotion):",
       err
     );
   }
 
   console.log(
-    `🎧 Áudio dinâmico gerado (data:audio/mpeg;base64,...) para o job ${jobId}`
+    `🎧 Áudio dinâmico gerado para o job ${jobId}. URL usada no Remotion: ${playbackUrl.slice(
+      0,
+      80
+    )}...`
   );
 
-  return dataUrl; // <- ESSA STRING vai pro <Audio src={audioSrc}>
+  return playbackUrl;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -280,7 +285,7 @@ const runRenderJob = async (job: RenderJob) => {
     inputProps: {
       name: job.name,
       photoUrl: job.photoUrl,
-      audioSrc, // 🔊 agora é data:audio/mpeg;base64,...
+      audioSrc, // 🔊 URL do áudio dinâmico (R2 ou data:audio/mpeg;base64, como fallback)
     },
     crf: 24,
     jpegQuality: 70,

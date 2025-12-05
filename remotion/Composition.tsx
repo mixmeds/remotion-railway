@@ -10,7 +10,7 @@ import {
   spring,
   interpolate,
   Img,
-  Audio,
+  Html5Audio,
 } from "remotion";
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
@@ -178,11 +178,11 @@ export const MyComp: React.FC<NoelCompProps> = ({
   return (
     <AbsoluteFill>
       {/* vídeo base (sem áudio próprio) */}
-      <Video src={staticFile("videonoel-h264.mp4")} />
+      <Video src={staticFile("videonoel-h264.mp4")} muted />
 
       {/* trecho POV da carta: nome + foto + ÁUDIO */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {safeAudioSrc && <Audio src={safeAudioSrc} />}
+        {safeAudioSrc && <Html5Audio src={safeAudioSrc} />}
         <NameOverlay name={safeName} />
         <PhotoOnLetter photoUrl={safePhotoUrl} />
       </Sequence>
