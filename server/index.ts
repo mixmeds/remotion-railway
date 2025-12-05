@@ -1,145 +1,104 @@
 import express from "express";
+import bodyParser from "body-parser";
+import cors from "cors";
+import { bundle } from "@remotion/bundler";
+import { RenderMediaOnLambdaInput, renderMedia } from "@remotion/renderer";
 import path from "path";
 import fs from "fs";
-import fsPromises from "fs/promises";
-import { randomUUID } from "crypto";
-import { bundle } from "@remotion/bundler";
-import { getCompositions, renderMedia } from "@remotion/renderer";
+import os from "os";
+import fetch from "node-fetch";
+
+// -------------------- CONFIG BÁSICA --------------------
+
+const PORT = process.env.PORT || 8080;
+const ENTRY = path.join(process.cwd(), "src", "index.tsx");
+const OUT_DIR = path.join(os.tmpdir(), "renders");
+
+if (!fs.existsSync(OUT_DIR)) {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+}
+
+// -------------------- R2 CONFIG --------------------
+
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
-/* -------------------------------------------------------------------------- */
-/*                               APP EXPRESS                                  */
-/* -------------------------------------------------------------------------- */
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+const R2_PUBLIC_BASE_URL = process.env.R2_PUBLIC_BASE_URL;
 
-const app = express();
-app.use(express.json());
+const r2Client =
+  R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY
+    ? new S3Client({
+        region: "auto",
+        endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+          accessKeyId: R2_ACCESS_KEY_ID,
+          secretAccessKey: R2_SECRET_ACCESS_KEY,
+        },
+      })
+    : null;
 
-// /public → ink-texture.webp, photo-placeholder.jpg etc.
-app.use(express.static(path.join(process.cwd(), "public")));
-
-// Diretório para salvar vídeos localmente
-const rendersDir = path.join(process.cwd(), "renders");
-if (!fs.existsSync(rendersDir)) {
-  fs.mkdirSync(rendersDir, { recursive: true });
-}
-
-// (Opcional) servir /renders pra debug
-app.use("/renders", express.static(rendersDir));
-
-/* -------------------------------------------------------------------------- */
-/*                         VARIÁVEIS DE AMBIENTE                               */
-/* -------------------------------------------------------------------------- */
-
-const {
-  R2_ACCESS_KEY_ID,
-  R2_SECRET_ACCESS_KEY,
-  R2_BUCKET,
-  R2_ACCOUNT_ID,
-  R2_PUBLIC_BASE_URL,
-  ELEVENLABS_API_KEY,
-  ELEVENLABS_VOICE_ID,
-} = process.env;
-
-/* -------------------------------------------------------------------------- */
-/*                               CONFIG R2                                     */
-/* -------------------------------------------------------------------------- */
-
-let r2Client: S3Client | null = null;
-
-if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET && R2_ACCOUNT_ID) {
-  r2Client = new S3Client({
-    region: "auto",
-    endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: R2_ACCESS_KEY_ID,
-      secretAccessKey: R2_SECRET_ACCESS_KEY,
-    },
-  });
-  console.log("✅ R2 configurado com sucesso.");
-} else {
-  console.warn("⚠️ R2 não configurado. Upload para R2 será ignorado.");
-}
-
-const uploadToR2 = async (
+async function uploadToR2(
   filePath: string,
   objectKey: string,
-  mime: string
-): Promise<string> => {
-  if (!r2Client || !R2_BUCKET || !R2_PUBLIC_BASE_URL) {
-    console.warn(
-      "⚠️ uploadToR2 chamado, mas R2 não está totalmente configurado."
-    );
-    return "";
+  contentType: string
+): Promise<string | null> {
+  if (!r2Client || !R2_BUCKET_NAME || !R2_PUBLIC_BASE_URL) {
+    console.warn("⚠️ R2 não configurado, pulando upload:", {
+      hasClient: !!r2Client,
+      bucket: R2_BUCKET_NAME,
+      publicBase: R2_PUBLIC_BASE_URL,
+    });
+    return null;
   }
 
-  const fileStream = fs.createReadStream(filePath);
+  const fileBuffer = await fs.promises.readFile(filePath);
 
-  const command = new PutObjectCommand({
-    Bucket: R2_BUCKET,
-    Key: objectKey,
-    Body: fileStream,
-    ContentType: mime,
-  });
+  await r2Client.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: objectKey,
+      Body: fileBuffer,
+      ContentType: contentType,
+    })
+  );
 
-  await r2Client.send(command);
+  const publicUrl = `${R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${objectKey}`;
+  console.log("✅ Upload R2 concluído:", publicUrl);
+  return publicUrl;
+}
 
-  const base = R2_PUBLIC_BASE_URL.replace(/\/$/, "");
-  return `${base}/${objectKey}`;
-};
+// -------------------- ELEVENLABS TTS --------------------
 
-/* -------------------------------------------------------------------------- */
-/*                        BUNDLE REMOTION (CACHEADO)                           */
-/* -------------------------------------------------------------------------- */
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 
-let bundledLocation: string | null = null;
-
-const getBundledLocation = async () => {
-  if (bundledLocation) {
-    return bundledLocation;
+// Gera o áudio dinâmico EM MEMÓRIA e devolve um data:audio/mpeg;base64,...
+// (sem depender de rede na hora do render)
+async function generateNoelAudio(jobId: string, name: string): Promise<string> {
+  if (!ELEVENLABS_API_KEY || !ELEVENLABS_VOICE_ID) {
+    throw new Error("ELEVENLABS_API_KEY ou ELEVENLABS_VOICE_ID não configurados");
   }
 
-  console.log("📦 Gerando bundle do Remotion...");
-  bundledLocation = await bundle({
-    entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
-    webpackOverride: (config) => config,
-  });
-  console.log("✅ Bundle pronto");
-  return bundledLocation;
-};
+  const texto = `${name}, você é alguém muito especial... mais do que imagina.`;
 
-/* -------------------------------------------------------------------------- */
-/*                       ELEVENLABS — ÁUDIO DINÂMICO                           */
-/* -------------------------------------------------------------------------- */
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`;
 
-const buildNoelLine = (name: string) => {
-  const safeName = name?.trim() || "meu amigo";
-  return `${safeName}, você é alguém muito especial… mais do que imagina.`;
-};
+  console.log(`🗣️ [TTS] Gerando áudio ElevenLabs para "${name}"...`);
 
-const generateNoelAudio = async (
-  jobId: string,
-  name: string
-): Promise<string> => {
-  if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
-  if (!ELEVENLABS_VOICE_ID) throw new Error("ELEVENLABS_VOICE_ID não configurada.");
-
-  const text = buildNoelLine(name);
-  console.log(`🗣️ Gerando áudio ElevenLabs para "${name}"...`);
-
-  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`;
-
-  const res = await fetch(endpoint, {
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       "xi-api-key": ELEVENLABS_API_KEY,
       "Content-Type": "application/json",
-      Accept: "audio/mpeg",
-    },
+    } as any,
     body: JSON.stringify({
-      text,
+      text: texto,
       model_id: "eleven_multilingual_v2",
       voice_settings: {
-        stability: 0.5,
+        stability: 0.6,
         similarity_boost: 0.8,
         style: 0.4,
         use_speaker_boost: true,
@@ -153,236 +112,189 @@ const generateNoelAudio = async (
 
   const mp3Buffer = Buffer.from(await res.arrayBuffer());
 
-  // 🔊 Monta data URL como fallback (caso R2 não esteja disponível)
+  // 1) Data URL para o Remotion (garantido, sem CORS)
   const base64 = mp3Buffer.toString("base64");
   const dataUrl = `data:audio/mpeg;base64,${base64}`;
-  let playbackUrl = dataUrl;
 
-  // 💾 Salva localmente e tenta enviar para o R2 para ter uma URL HTTP pública
+  // 2) Opcional: salvar + enviar pro R2 só pra histórico / debug
   try {
-    const localAudioPath = path.join(rendersDir, `audio-${jobId}.mp3`);
-    await fsPromises.writeFile(localAudioPath, mp3Buffer);
-
+    const localAudioPath = path.join(OUT_DIR, `${jobId}.mp3`);
+    await fs.promises.writeFile(localAudioPath, mp3Buffer);
     const objectKey = `audios/${jobId}.mp3`;
     const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/mpeg");
     if (audioUrlR2) {
       console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
-      playbackUrl = audioUrlR2;
     }
   } catch (err) {
-    console.error(
-      "⚠️ Falha ao salvar/enviar áudio para R2 (usando apenas base64 no Remotion):",
-      err
-    );
+    console.error("⚠️ Falha ao salvar/enviar áudio para R2:", err);
   }
 
   console.log(
-    `🎧 Áudio dinâmico gerado para o job ${jobId}. URL usada no Remotion: ${playbackUrl.slice(
-      0,
-      80
-    )}...`
+    `🎧 Áudio dinâmico gerado (data:audio/mpeg;base64,...) para o job ${jobId}`
   );
 
-  return playbackUrl;
-};
+  return dataUrl;
+}
 
-/* -------------------------------------------------------------------------- */
-/*                              FILA DE RENDER                                 */
-/* -------------------------------------------------------------------------- */
+// -------------------- TIPOS --------------------
 
-type RenderStatus = "queued" | "processing" | "uploading" | "done" | "error";
-
-type RenderJob = {
-  id: string;
+type NoelRenderRequest = {
   name: string;
-  photoUrl: string;
-  status: RenderStatus;
-  createdAt: string;
-  updatedAt: string;
-  videoUrl?: string;
+  photoUrl?: string;
+};
+
+type NoelJob = {
+  id: string;
+  status: "queued" | "rendering" | "done" | "error";
   error?: string;
-  audioSrc?: string
+  name: string;
+  photoUrl?: string;
+  outputUrl?: string;
 };
 
-const jobs = new Map<string, RenderJob>();
-const queue: string[] = [];
-let isProcessing = false;
+const jobQueue: NoelJob[] = [];
 
-const nowISO = () => new Date().toISOString();
+// -------------------- BUNDLE REMOTION --------------------
 
-const enqueueJob = (job: RenderJob) => {
-  jobs.set(job.id, job);
-  queue.push(job.id);
-  processQueue();
-};
+let bundled = false;
+let serveUrlGlobal: string | null = null;
 
-const processQueue = async () => {
-  if (isProcessing) return;
-  const nextId = queue.shift();
-  if (!nextId) return;
+async function ensureBundle() {
+  if (bundled && serveUrlGlobal) return serveUrlGlobal;
 
-  const job = jobs.get(nextId);
-  if (!job) return;
+  console.log("📦 Gerando bundle Remotion...");
+  serveUrlGlobal = await bundle(ENTRY, () => undefined, {
+    enableCaching: true,
+    webpackOverride: (config) => config,
+  });
+  bundled = true;
+  console.log("✅ Bundle Remotion pronto:", serveUrlGlobal);
+  return serveUrlGlobal;
+}
 
-  isProcessing = true;
-  job.status = "processing";
-  job.updatedAt = nowISO();
-  jobs.set(job.id, job);
+// -------------------- RENDER --------------------
 
+async function runRenderJob(job: NoelJob) {
   try {
-    console.log(`🎬 Processando job ${job.id} (name="${job.name}")...`);
-    await runRenderJob(job);
+    job.status = "rendering";
+
+    const serveUrl = await ensureBundle();
+
+    // Gera áudio dinâmico (data URL)
+    const audioSrc = await generateNoelAudio(job.id, job.name);
+
+    console.log("🎧 [SERVER] inputProps enviados pro Remotion:", {
+      name: job.name,
+      photoUrl: job.photoUrl,
+      hasPhoto: !!job.photoUrl,
+      audioSrcSnippet: audioSrc.substring(0, 50) + "...",
+    });
+
+    const compositionId = "noel";
+
+    const outputPath = path.join(OUT_DIR, `${job.id}.mp4`);
+
+    const inputProps = {
+      name: job.name,
+      photoUrl: job.photoUrl,
+      hasPhoto: !!job.photoUrl,
+      audioSrc,
+    };
+
+    const options: RenderMediaOnLambdaInput = {
+      composition: compositionId,
+      serveUrl,
+      inputProps,
+      codec: "h264",
+      audioCodec: "aac",
+      outName: `${job.id}.mp4`,
+      outputLocation: outputPath,
+      chromiumOptions: {
+        disableWebSecurity: true,
+      },
+    };
+
+    console.log("🎞️ Iniciando render do Remotion...", {
+      jobId: job.id,
+      name: job.name,
+      photoUrl: job.photoUrl,
+    });
+
+    await renderMedia(options);
+
+    console.log("✅ Render Remotion finalizado, iniciando upload do vídeo...");
+
+    const objectKey = `renders/${job.id}.mp4`;
+    const videoUrl = await uploadToR2(outputPath, objectKey, "video/mp4");
+
+    job.status = "done";
+    job.outputUrl = videoUrl || null || undefined;
+
+    console.log(`🎉 Job ${job.id} finalizado. Vídeo em: ${job.outputUrl}`);
   } catch (err: any) {
     console.error("❌ Erro ao processar job:", err);
     job.status = "error";
-    job.error = err?.message ?? String(err);
-  } finally {
-    job.updatedAt = nowISO();
-    jobs.set(job.id, job);
-
-    isProcessing = false;
-    if (queue.length > 0) processQueue();
+    job.error = String(err?.message || err);
   }
-};
+}
 
-/* -------------------------------------------------------------------------- */
-/*                                RENDER JOB                                   */
-/* -------------------------------------------------------------------------- */
-
-const runRenderJob = async (job: RenderJob) => {
-  const serveUrl = await getBundledLocation();
-
-  console.log("🔁 Lendo composições Remotion...");
-  const comps = await getCompositions(serveUrl, {
-    inputProps: { name: job.name, photoUrl: job.photoUrl },
+function processQueue() {
+  const next = jobQueue.find((j) => j.status === "queued");
+  if (!next) return;
+  runRenderJob(next).catch((err) => {
+    console.error("Erro ao processar job:", err);
   });
+}
 
-  const composition = comps.find((c) => c.id === "noel");
-  if (!composition) {
-    throw new Error("Composição 'noel' não encontrada.");
-  }
+setInterval(processQueue, 2000);
 
-  console.log("🎧 Gerando áudio dinâmico para o render...");
-  const audioSrc = await generateNoelAudio(job.id, job.name);
+// -------------------- EXPRESS --------------------
 
-  const hasAudioSrc =
-    typeof audioSrc === "string" && audioSrc.trim().length > 0;
+const app = express();
+app.use(cors());
+app.use(bodyParser.json({ limit: "10mb" }));
 
-  const inputProps = {
-    name: job.name,
-    photoUrl: job.photoUrl,
-    hasPhoto: Boolean(job.photoUrl),
-    audioSrc,
-    hasAudioSrc,
-  };
-
-  console.log(
-    "🎧 [SERVER] inputProps enviados pro Remotion:",
-    JSON.stringify(
-      {
-        ...inputProps,
-        audioSrcSnippet: hasAudioSrc
-          ? audioSrc.slice(0, 80) + "..."
-          : null,
-      },
-      null,
-      2
-    )
-  );
-
-  const tempOutput = path.join(rendersDir, `render-${job.id}.mp4`);
-
-  console.log("🎞️ Iniciando render do Remotion...", {
-    serveUrl,
-    compId: composition.id,
-    jobId: job.id,
-    name: job.name,
-    photoUrl: job.photoUrl,
-    hasPhoto: Boolean(job.photoUrl),
-    hasAudioSrc,
-    audioSrcSnippet: hasAudioSrc ? audioSrc.slice(0, 80) + "..." : null,
-  });
-
-  await renderMedia({
-    serveUrl,
-    composition,
-    codec: "h264",
-    audioCodec: "aac", // 🔊 garante trilha de áudio
-    outputLocation: tempOutput,
-    inputProps,
-    crf: 24,
-    jpegQuality: 70,
-  });
-
-
-  console.log("✅ Render Remotion finalizado, iniciando upload do vídeo...");
-
-  job.status = "uploading";
-  job.updatedAt = nowISO();
-  jobs.set(job.id, job);
-
-  const objectKey = `renders/${job.id}.mp4`;
-  const videoUrl = await uploadToR2(tempOutput, objectKey, "video/mp4");
-
-  // limpa arquivo de vídeo local
-  fs.unlink(tempOutput, () => {});
-
-  job.status = "done";
-  job.videoUrl = videoUrl;
-  job.updatedAt = nowISO();
-  jobs.set(job.id, job);
-
-  console.log(`🎉 Job ${job.id} finalizado. Vídeo em: ${videoUrl}`);
-};
-
-/* -------------------------------------------------------------------------- */
-/*                                    ROTAS                                   */
-/* -------------------------------------------------------------------------- */
-
-app.get("/", (_req, res) => {
-  res.json({ ok: true, message: "API funcionando." });
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
 });
 
-app.post("/render", (req, res) => {
-  const { name, photoUrl } = req.body as { name?: string; photoUrl?: string };
+app.post("/render", async (req, res) => {
+  try {
+    const { name, photoUrl } = req.body as NoelRenderRequest;
 
-  if (!name || !photoUrl) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "Envie name e photoUrl." });
+    if (!name || typeof name !== "string") {
+      return res.status(400).json({ error: "name é obrigatório" });
+    }
+
+    const id = Date.now().toString();
+
+    const job: NoelJob = {
+      id,
+      status: "queued",
+      name,
+      photoUrl,
+    };
+
+    jobQueue.push(job);
+
+    console.log(`🧾 Novo job enfileirado: ${id} (name="${name}")`);
+
+    res.json({ jobId: id });
+  } catch (err: any) {
+    console.error("Erro /render:", err);
+    res.status(500).json({ error: String(err?.message || err) });
   }
-
-  const jobId = randomUUID();
-  const now = nowISO();
-
-  const job: RenderJob = {
-    id: jobId,
-    name: name.trim(),
-    photoUrl: photoUrl.trim(),
-    status: "queued",
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  console.log(`🧾 Novo job enfileirado: ${jobId} (name="${job.name}")`);
-  enqueueJob(job);
-
-  res.json({ ok: true, jobId });
 });
 
 app.get("/job/:id", (req, res) => {
-  const job = jobs.get(req.params.id);
+  const job = jobQueue.find((j) => j.id === req.params.id);
   if (!job) {
-    return res.status(404).json({ ok: false, error: "Job não encontrado" });
+    return res.status(404).json({ error: "Job não encontrado" });
   }
   res.json(job);
 });
 
-/* -------------------------------------------------------------------------- */
-/*                               START SERVER                                  */
-/* -------------------------------------------------------------------------- */
-
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
+  console.log("✅ R2 configurado com sucesso.");
   console.log(`🚀 Rodando na porta ${PORT}`);
 });
