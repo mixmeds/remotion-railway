@@ -264,8 +264,13 @@ const runRenderJob = async (job: RenderJob) => {
 
   console.log("🎧 Gerando áudio dinâmico para o render...");
   const audioSrc = await generateNoelAudio(job.id, job.name);
+  job.audioSrc = audioSrc;
+  jobs.set(job.id, job);
 
   const tempOutput = path.join(rendersDir, `render-${job.id}.mp4`);
+
+  const hasPhoto = Boolean(job.photoUrl);
+  const hasAudioSrc = Boolean(audioSrc);
 
   console.log("🎞️ Iniciando render do Remotion...", {
     serveUrl,
@@ -273,7 +278,9 @@ const runRenderJob = async (job: RenderJob) => {
     jobId: job.id,
     name: job.name,
     photoUrl: job.photoUrl,
-    audioSrcPreview: audioSrc.slice(0, 60) + "...", // só pra não floodar log
+    hasPhoto,
+    hasAudioSrc,
+    audioSrcPreview: audioSrc ? audioSrc.slice(0, 80) + "..." : null,
   });
 
   await renderMedia({
@@ -285,7 +292,9 @@ const runRenderJob = async (job: RenderJob) => {
     inputProps: {
       name: job.name,
       photoUrl: job.photoUrl,
+      hasPhoto,
       audioSrc, // 🔊 URL do áudio dinâmico (R2 ou data:audio/mpeg;base64, como fallback)
+      hasAudioSrc,
     },
     crf: 24,
     jpegQuality: 70,
