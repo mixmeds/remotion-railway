@@ -145,11 +145,9 @@ const SERVER_URL =
 
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
-export const MyComp: React.FC<NoelCompProps> = ({
-  name,
-  photoUrl,
-  audioSrc,
-}) => {
+export const MyComp: React.FC<NoelCompProps> = (props) => {
+  const { name, photoUrl, audioSrc } = props;
+
   const safeName = (name ?? "").trim() || "Amigo(a)";
 
   const safePhotoUrl =
@@ -158,17 +156,36 @@ export const MyComp: React.FC<NoelCompProps> = ({
       : `${SERVER_URL.replace(/\/$/, "")}/photo-placeholder.jpg`;
 
   const safeAudioSrc =
-    audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
+    typeof audioSrc === "string" && audioSrc.trim() !== ""
+      ? audioSrc.trim()
+      : undefined;
 
   console.log(
-    "🎧 [MyComp] props recebidos:",
+    "🎧 [MyComp] RAW props:",
     JSON.stringify(
       {
-        name: safeName,
+        name,
+        photoUrl,
+        audioSrcType: typeof audioSrc,
+        audioSrcSnippet:
+          typeof audioSrc === "string" ? audioSrc.slice(0, 80) + "..." : audioSrc,
+      },
+      null,
+      2
+    )
+  );
+
+  console.log(
+    "🎧 [MyComp] props normalizados:",
+    JSON.stringify(
+      {
+        safeName,
         hasPhoto: !!photoUrl,
-        photoUrl: safePhotoUrl,
+        safePhotoUrl,
         hasAudioSrc: !!safeAudioSrc,
-        audioSrc: safeAudioSrc,
+        safeAudioSrcSnippet: safeAudioSrc
+          ? safeAudioSrc.slice(0, 80) + "..."
+          : null,
       },
       null,
       2
