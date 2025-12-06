@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React from "react";
 import {
   AbsoluteFill,
   Video,
@@ -9,29 +9,26 @@ import {
   spring,
   interpolate,
   Img,
-  Audio as RemotionAudio, // 👈 renomeei para não conflitar com window.Audio
-  delayRender,
-  continueRender,
 } from "remotion";
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
+import { AudioLayer } from "./AudioLayer";
 
 /* ------------ TIPAGEM DOS PROPS ------------ */
 
 export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
-  audioSrc?: string; // 🔊 áudio dinâmico (ElevenLabs / Railway)
+  audioSrc?: string;
 };
 
 /* ------------ MAPA DE FRAMES ------------ */
 
-// POV da carta (onde aparece nome e foto)
 const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
-/* ------------ FOTO SOBRE A CARTA (LAYOUT DO LOCAL) ------------ */
+/* ------------ FOTO SOBRE A CARTA ------------ */
 
 const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   const texture = staticFile("ink-texture.webp");
@@ -40,37 +37,28 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
     <div
       style={{
         position: "absolute",
-
-        // 🔥 POSIÇÃO E DIMENSÕES COPIADAS DO LOCAL
         top: 500,
         left: "50%",
         transform: "translateX(-50%)",
-
         width: 520,
         height: 300,
-
         borderRadius: 18,
         overflow: "hidden",
-
         background: "#dec8a4",
         boxShadow: "0 0 0 2px rgba(80, 50, 20, 0.25)",
       }}
     >
-      {/* FOTO COM FIT CORRETO */}
       <Img
         src={photoUrl}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-
-          // mescla igual ao local (visual old paper)
           mixBlendMode: "multiply",
           filter: "sepia(0.5) contrast(0.95) saturate(0.9)",
         }}
       />
 
-      {/* TEXTURA DO PAPEL SOBRE A FOTO */}
       <div
         style={{
           position: "absolute",
@@ -86,7 +74,7 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   );
 };
 
-/* ------------ NAME OVERLAY (LAYOUT DO LOCAL MANTIDO) ------------ */
+/* ------------ NAME OVERLAY ------------ */
 
 const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const frame = useCurrentFrame();
@@ -123,12 +111,9 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
     <div
       style={{
         position: "absolute",
-
-        // 🔥 POSIÇÃO PERFEITA E COMPATÍVEL COM O LAYOUT LOCAL
         top: 260,
         left: "50%",
         transform: "translateX(-50%)",
-
         pointerEvents: "none",
         background: "transparent",
         zIndex: 10,
@@ -159,89 +144,28 @@ export const MyComp: React.FC<NoelCompProps> = ({
   audioSrc,
 }) => {
   const safeName = (name ?? "").trim() || "Amigo(a)";
-
-  const safePhotoUrl =
+  const safePhoto =
     photoUrl && photoUrl.trim() !== ""
       ? photoUrl.trim()
-      : staticFile("photo-placeholder.jpg"); // 🔁 fallback local
+      : staticFile("photo-placeholder.jpg");
 
-  const safeAudioSrc =
+  const safeAudio =
     audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
 
-  // 🔥 DEBUG 1: ver exatamente o que chegou de áudio
-  console.log("🎧 [REMOTION DEBUG] audioSrc recebido no MyComp:", audioSrc);
-  console.log("🎧 [REMOTION DEBUG] safeAudioSrc (normalizado):", safeAudioSrc);
-
-  // 🔥 DEBUG 2: testar se o áudio realmente carrega no browser do Remotion
-  const handleRef = useRef<number | null>(null);
-  if (handleRef.current === null) {
-    handleRef.current = delayRender("Testando carregamento do áudio dinâmico");
-  }
-
-  useEffect(() => {
-    const handle = handleRef.current;
-    if (handle === null) return;
-
-    if (!safeAudioSrc) {
-      console.warn(
-        "⚠ [REMOTION DEBUG] Nenhum safeAudioSrc definido. Nada para carregar."
-      );
-      continueRender(handle);
-      return;
-    }
-
-    console.log(
-      "🎧 [REMOTION DEBUG] Tentando carregar áudio via HTMLAudio:",
-      safeAudioSrc
-    );
-
-    // usa o Audio nativo do browser (não o RemotionAudio)
-    const testAudio = new window.Audio(safeAudioSrc);
-
-    const onCanPlay = () => {
-      console.log(
-        "✅ [REMOTION DEBUG] ÁUDIO CARREGOU COM SUCESSO (canplaythrough):",
-        safeAudioSrc
-      );
-      continueRender(handle);
-    };
-
-    const onError = (e: any) => {
-      console.error(
-        "❌ [REMOTION DEBUG] FALHA AO CARREGAR ÁUDIO (HTMLAudio error):",
-        safeAudioSrc,
-        e
-      );
-      continueRender(handle);
-    };
-
-    testAudio.addEventListener("canplaythrough", onCanPlay);
-    testAudio.addEventListener("error", onError);
-
-    return () => {
-      testAudio.removeEventListener("canplaythrough", onCanPlay);
-      testAudio.removeEventListener("error", onError);
-      testAudio.pause();
-    };
-  }, [safeAudioSrc]);
+  console.log("🎧 [REMOTION DEBUG] audioSrc recebido em MyComp:", audioSrc);
+  console.log("🎧 [REMOTION DEBUG] safeAudio normalizado:", safeAudio);
 
   return (
     <AbsoluteFill>
-      {/* vídeo base (mudo, o áudio é só o dinâmico) */}
-      <Video src={staticFile("videonoel-h264.mp4")} />
+      {/* vídeo base mutado */}
+      <Video src={staticFile("videonoel-h264.mp4")} volume={0} />
 
-      {/* trecho POV da carta: nome + foto + ÁUDIO */}
+      {/* trecho POV (nome, foto, áudio) */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {/* 🔊 áudio só toca nesse trecho POV */}
-        {safeAudioSrc && (
-          <RemotionAudio
-            src={safeAudioSrc}
-            // se quiser, dá para controlar fade-in/fade-out com "volume={(f) => ...}"
-          />
-        )}
+        {safeAudio && <AudioLayer src={safeAudio} />}
 
         <NameOverlay name={safeName} />
-        <PhotoOnLetter photoUrl={safePhotoUrl} />
+        <PhotoOnLetter photoUrl={safePhoto} />
       </Sequence>
     </AbsoluteFill>
   );
