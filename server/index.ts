@@ -232,22 +232,10 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
 
   const serveUrl = await getBundledLocation();
 
-  // 1) Garante que a composição "noel" existe
-  const comps = await getCompositions(serveUrl, {});
-  console.log(
-    `📽️ [JOB ${job.id}] Composições disponíveis:`,
-    comps.map((c) => c.id)
-  );
-
-  const hasNoel = comps.some((c) => c.id === "noel");
-  if (!hasNoel) {
-    throw new Error("Composição 'noel' não encontrada.");
-  }
-
-  // 2) Gera o áudio dinâmico
+  // 1) Gera o áudio dinâmico primeiro
   const audioSrc = await generateNoelAudio(job.id, job.name);
 
-  // 3) inputProps que vão direto para o MyComp
+  // 2) inputProps finais que VÃO direto para o MyComp
   const inputProps = {
     name: job.name,
     photoUrl: job.photoUrl,
@@ -256,13 +244,32 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
 
   console.log(`📦 [JOB ${job.id}] inputProps finais para renderMedia:`, inputProps);
 
+  // 3) Descobre a composição "noel" como objeto
+  const comps = await getCompositions(serveUrl, {
+    inputProps,
+  });
+
+  console.log(
+    `📽️ [JOB ${job.id}] Composições disponíveis:`,
+    comps.map((c) => c.id)
+  );
+
+  const composition = comps.find((c) => c.id === "noel");
+  if (!composition) {
+    throw new Error("Composição 'noel' não encontrada.");
+  }
+
+  console.log(
+    `🎯 [JOB ${job.id}] Composição 'noel' selecionada. defaultProps:`,
+    (composition as any).defaultProps
+  );
+
   const outPath = path.join(rendersDir, `render-${job.id}.mp4`);
   console.log(`🎞️ [JOB ${job.id}] Render saída em:`, outPath);
 
-  // 4) Renderiza usando compositionId + inputProps
   await renderMedia({
     serveUrl,
-    compositionId: "noel",
+    composition,
     codec: "h264",
     outputLocation: outPath,
     inputProps,
