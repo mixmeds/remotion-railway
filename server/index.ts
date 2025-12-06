@@ -61,7 +61,11 @@ if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET && R2_ACCOUNT_ID) {
   console.warn("⚠️ R2 não configurado completamente, upload será ignorado.");
 }
 
-const uploadToR2 = async (filePath: string, objectKey: string, mime: string) => {
+const uploadToR2 = async (
+  filePath: string,
+  objectKey: string,
+  mime: string
+): Promise<string> => {
   if (!r2Client || !R2_BUCKET || !R2_PUBLIC_BASE_URL) {
     console.warn("⚠️ R2 indisponível, pulando upload.");
     return "";
@@ -69,14 +73,14 @@ const uploadToR2 = async (filePath: string, objectKey: string, mime: string) => 
 
   const fileStream = createReadStream(filePath);
 
-  const cmd = new PutObjectCommand({
-    Bucket: R2_BUCKET,
-    Key: objectKey,
-    Body: fileStream,
-    ContentType: mime,
-  });
-
-  await r2Client.send(cmd);
+  await r2Client.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: objectKey,
+      Body: fileStream,
+      ContentType: mime,
+    })
+  );
 
   const base = R2_PUBLIC_BASE_URL.replace(/\/$/, "");
   return `${base}/${objectKey}`;
@@ -88,7 +92,7 @@ const uploadToR2 = async (filePath: string, objectKey: string, mime: string) => 
 
 let bundledLocation: string | null = null;
 
-const getBundledLocation = async () => {
+const getBundledLocation = async (): Promise<string> => {
   if (bundledLocation) return bundledLocation;
 
   console.log("📦 Gerando bundle Remotion...");
@@ -104,7 +108,7 @@ const getBundledLocation = async () => {
 /*                       ELEVENLABS + FFMPEG (MP3 → WAV)                      */
 /* -------------------------------------------------------------------------- */
 
-const buildLine = (name: string) => {
+const buildLine = (name: string): string => {
   const safe = name.trim() || "meu amigo";
   return `${safe}, você é alguém muito especial… mais do que imagina.`;
 };
@@ -217,33 +221,33 @@ const jobs = new Map<string, RenderJob>();
 const queue: string[] = [];
 let isProcessing = false;
 
-const nowISO = () => new Date().toISOString();
+const nowISO = (): string => new Date().toISOString();
 
 /* -------------------------------------------------------------------------- */
 /*                           EXECUÇÃO DO JOB                                   */
 /* -------------------------------------------------------------------------- */
 
-const runRenderJob = async (job: RenderJob) => {
+const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`🎬 [JOB ${job.id}] Iniciando runRenderJob...`);
 
   const serveUrl = await getBundledLocation();
 
-  // 1) Só garantimos que a composição "noel" existe
+  // 1) Garante que a composição "noel" existe
   const comps = await getCompositions(serveUrl, {});
-  const hasNoel = comps.some((c) => c.id === "noel");
   console.log(
     `📽️ [JOB ${job.id}] Composições disponíveis:`,
     comps.map((c) => c.id)
   );
 
+  const hasNoel = comps.some((c) => c.id === "noel");
   if (!hasNoel) {
     throw new Error("Composição 'noel' não encontrada.");
   }
 
-  // 2) Gera o áudio dinâmico (URL WAV)
+  // 2) Gera o áudio dinâmico
   const audioSrc = await generateNoelAudio(job.id, job.name);
 
-  // 3) Monta os props finais que VÃO para o Remotion
+  // 3) inputProps que vão direto para o MyComp
   const inputProps = {
     name: job.name,
     photoUrl: job.photoUrl,
@@ -252,17 +256,16 @@ const runRenderJob = async (job: RenderJob) => {
 
   console.log(`📦 [JOB ${job.id}] inputProps finais para renderMedia:`, inputProps);
 
-  // 4) Caminho do vídeo temporário
   const outPath = path.join(rendersDir, `render-${job.id}.mp4`);
   console.log(`🎞️ [JOB ${job.id}] Render saída em:`, outPath);
 
-  // 5) Renderiza usando compositionId + inputProps (sem mexer em defaultProps)
+  // 4) Renderiza usando compositionId + inputProps
   await renderMedia({
     serveUrl,
     compositionId: "noel",
     codec: "h264",
     outputLocation: outPath,
-    inputProps, // 🔥 agora é ISSO que alimenta o MyComp
+    inputProps,
     crf: 24,
     jpegQuality: 70,
   });
@@ -277,8 +280,6 @@ const runRenderJob = async (job: RenderJob) => {
   const videoUrl = await uploadToR2(outPath, key, "video/mp4");
 
   fs.unlink(outPath, () => {});
-
-  // limpa áudios locais
   fs.unlink(path.join(rendersDir, `audio-${job.id}.mp3`), () => {});
   fs.unlink(path.join(rendersDir, `audio-${job.id}.wav`), () => {});
 
@@ -290,24 +291,7 @@ const runRenderJob = async (job: RenderJob) => {
   console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
 };
 
-  const key = `renders/${job.id}.mp4`;
-  const videoUrl = await uploadToR2(outPath, key, "video/mp4");
-
-  fs.unlink(outPath, () => {});
-
-  // opcional: limpar audios locais
-  fs.unlink(path.join(rendersDir, `audio-${job.id}.mp3`), () => {});
-  fs.unlink(path.join(rendersDir, `audio-${job.id}.wav`), () => {});
-
-  job.status = "done";
-  job.videoUrl = videoUrl;
-  job.updatedAt = nowISO();
-  jobs.set(job.id, job);
-
-  console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
-};
-
-const processQueue = async () => {
+const processQueue = async (): Promise<void> => {
   if (isProcessing) return;
   const nextId = queue.shift();
   if (!nextId) return;
@@ -330,7 +314,9 @@ const processQueue = async () => {
     jobs.set(job.id, job);
   } finally {
     isProcessing = false;
-    if (queue.length > 0) processQueue();
+    if (queue.length > 0) {
+      processQueue();
+    }
   }
 };
 
@@ -346,7 +332,9 @@ app.post("/render", (req, res) => {
   const { name, photoUrl } = req.body as { name?: string; photoUrl?: string };
 
   if (!name || !photoUrl) {
-    return res.status(400).json({ ok: false, error: "Envie name e photoUrl." });
+    return res
+      .status(400)
+      .json({ ok: false, error: "Envie name e photoUrl." });
   }
 
   const id = randomUUID();
@@ -370,7 +358,9 @@ app.post("/render", (req, res) => {
 
 app.get("/jobs/:id", (req, res) => {
   const job = jobs.get(req.params.id);
-  if (!job) return res.status(404).json({ ok: false, error: "Job não encontrado" });
+  if (!job) {
+    return res.status(404).json({ ok: false, error: "Job não encontrado" });
+  }
   res.json(job);
 });
 
