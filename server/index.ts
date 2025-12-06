@@ -228,59 +228,41 @@ const runRenderJob = async (job: RenderJob) => {
 
   const serveUrl = await getBundledLocation();
 
-  const comps = await getCompositions(serveUrl, {
-    inputProps: {
-      name: job.name,
-      photoUrl: job.photoUrl,
-      audioSrc: "",
-    },
-  });
-
+  // 1) Só garantimos que a composição "noel" existe
+  const comps = await getCompositions(serveUrl, {});
+  const hasNoel = comps.some((c) => c.id === "noel");
   console.log(
     `📽️ [JOB ${job.id}] Composições disponíveis:`,
     comps.map((c) => c.id)
   );
 
-  const baseComp = comps.find((c) => c.id === "noel");
-  if (!baseComp) {
+  if (!hasNoel) {
     throw new Error("Composição 'noel' não encontrada.");
   }
 
-  console.log(
-    `📽️ [JOB ${job.id}] defaultProps ORIGINAL:`,
-    (baseComp as any).defaultProps
-  );
-
-  // gera áudio e monta props finais
+  // 2) Gera o áudio dinâmico (URL WAV)
   const audioSrc = await generateNoelAudio(job.id, job.name);
 
-  const mergedProps = {
-    ...(baseComp as any).defaultProps,
+  // 3) Monta os props finais que VÃO para o Remotion
+  const inputProps = {
     name: job.name,
     photoUrl: job.photoUrl,
     audioSrc,
   };
 
-  console.log(`📦 [JOB ${job.id}] mergedProps:`, mergedProps);
+  console.log(`📦 [JOB ${job.id}] inputProps finais para renderMedia:`, inputProps);
 
-  const compWithDefaults = {
-    ...baseComp,
-    defaultProps: mergedProps,
-  } as typeof baseComp;
-
-  console.log(
-    `🎯 [JOB ${job.id}] defaultProps FINAL da composição:`,
-    compWithDefaults.defaultProps
-  );
-
+  // 4) Caminho do vídeo temporário
   const outPath = path.join(rendersDir, `render-${job.id}.mp4`);
   console.log(`🎞️ [JOB ${job.id}] Render saída em:`, outPath);
 
+  // 5) Renderiza usando compositionId + inputProps (sem mexer em defaultProps)
   await renderMedia({
     serveUrl,
-    composition: compWithDefaults,
+    compositionId: "noel",
     codec: "h264",
     outputLocation: outPath,
+    inputProps, // 🔥 agora é ISSO que alimenta o MyComp
     crf: 24,
     jpegQuality: 70,
   });
@@ -290,6 +272,23 @@ const runRenderJob = async (job: RenderJob) => {
   job.status = "uploading";
   job.updatedAt = nowISO();
   jobs.set(job.id, job);
+
+  const key = `renders/${job.id}.mp4`;
+  const videoUrl = await uploadToR2(outPath, key, "video/mp4");
+
+  fs.unlink(outPath, () => {});
+
+  // limpa áudios locais
+  fs.unlink(path.join(rendersDir, `audio-${job.id}.mp3`), () => {});
+  fs.unlink(path.join(rendersDir, `audio-${job.id}.wav`), () => {});
+
+  job.status = "done";
+  job.videoUrl = videoUrl;
+  job.updatedAt = nowISO();
+  jobs.set(job.id, job);
+
+  console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
+};
 
   const key = `renders/${job.id}.mp4`;
   const videoUrl = await uploadToR2(outPath, key, "video/mp4");
