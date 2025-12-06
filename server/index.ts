@@ -4,6 +4,7 @@ import fs from "fs";
 import fsPromises from "fs/promises";
 import { createReadStream } from "fs";
 import { randomUUID } from "crypto";
+import { spawn } from "child_process";
 import { bundle } from "@remotion/bundler";
 import { getCompositions, renderMedia } from "@remotion/renderer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
@@ -104,13 +105,48 @@ const getBundledLocation = async () => {
 };
 
 /* -------------------------------------------------------------------------- */
-/*                       ELEVENLABS — ÁUDIO DINÂMICO                           */
+/*                       ELEVENLABS + FFMPEG (MP3 → WAV)                      */
 /* -------------------------------------------------------------------------- */
 
+// Frase dinâmica
 const buildNoelLine = (name: string) => {
   const safeName = name.trim() || "meu amigo";
-  // Texto simples (pode ajustar depois pra usar as tags/emotion certinho)
   return `${safeName}, você é alguém muito especial… mais do que imagina.`;
+};
+
+// Converte um MP3 para WAV usando ffmpeg
+const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    console.log("🎛️ Convertendo MP3 para WAV com ffmpeg...");
+    const ff = spawn("ffmpeg", [
+      "-y", // sobrescreve se existir
+      "-i",
+      inputPath,
+      "-acodec",
+      "pcm_s16le",
+      "-ar",
+      "44100",
+      outputPath,
+    ]);
+
+    ff.stderr.on("data", (data) => {
+      // log de debug (ffmpeg escreve em stderr normalmente)
+      console.log("[ffmpeg]", data.toString());
+    });
+
+    ff.on("close", (code) => {
+      if (code === 0) {
+        console.log("✅ Conversão MP3 → WAV concluída.");
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg encerrou com código ${code}`));
+      }
+    });
+
+    ff.on("error", (err) => {
+      reject(err);
+    });
+  });
 };
 
 const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
@@ -121,15 +157,15 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
   const text = buildNoelLine(name);
   console.log(`🗣️ Gerando áudio ElevenLabs para "${name}"...`);
 
-  // 🔥 Agora já pedimos WAV (PCM 44.1kHz) direto
-  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=pcm_44100`;
+  // ElevenLabs devolve MP3 (permitido no plano atual)
+  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128`;
 
   const res = await fetch(endpoint, {
     method: "POST",
     headers: {
       "xi-api-key": ELEVENLABS_API_KEY,
       "Content-Type": "application/json",
-      Accept: "audio/wav",
+      Accept: "audio/mpeg",
     },
     body: JSON.stringify({
       text,
@@ -148,28 +184,34 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
   }
 
   const audioBuffer = Buffer.from(await res.arrayBuffer());
-  const localAudioPath = path.join(rendersDir, `audio-${jobId}.wav`);
 
-  // salva local (usado pelo Remotion)
-  await fsPromises.writeFile(localAudioPath, audioBuffer);
+  // Caminhos locais
+  const localMp3Path = path.join(rendersDir, `audio-${jobId}.mp3`);
+  const localWavPath = path.join(rendersDir, `audio-${jobId}.wav`);
 
-  // monta URL local que o Chrome do Remotion vai acessar
+  // Salva MP3
+  await fsPromises.writeFile(localMp3Path, audioBuffer);
+
+  // Converte MP3 → WAV
+  await convertMp3ToWav(localMp3Path, localWavPath);
+
+  // URL local servida pelo Express (é essa que o Remotion usa)
   const baseServer = SERVER_URL.replace(/\/$/, "");
   const localAudioUrl = `${baseServer}/renders/audio-${jobId}.wav`;
 
-  // tenta subir pro R2 só para persistir (não dependemos disso pro render)
+  // Upload opcional do WAV para R2
   try {
     const objectKey = `audios/${jobId}.wav`;
-    const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/wav");
+    const audioUrlR2 = await uploadToR2(localWavPath, objectKey, "audio/wav");
     if (audioUrlR2) {
-      console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
+      console.log(`🔊 Áudio (WAV) enviado para R2: ${audioUrlR2}`);
     }
   } catch (err) {
     console.error("⚠️ Falha ao enviar áudio para R2 (seguindo só com o local):", err);
   }
 
-  console.log(`🎧 Áudio local para render: ${localAudioUrl}`);
-  return localAudioUrl; // <- É ESSA URL que vai para o Audio src no Remotion
+  console.log(`🎧 Áudio local para render (WAV): ${localAudioUrl}`);
+  return localAudioUrl;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -241,7 +283,7 @@ const runRenderJob = async (job: RenderJob) => {
     throw new Error("Composição 'noel' não encontrada.");
   }
 
-  // Gera áudio dinâmico (URL local)
+  // Gera áudio dinâmico (URL local de WAV)
   const audioSrc = await generateNoelAudio(job.id, job.name);
 
   const tempOutput = path.join(rendersDir, `render-${job.id}.mp4`);
@@ -255,7 +297,7 @@ const runRenderJob = async (job: RenderJob) => {
     inputProps: {
       name: job.name,
       photoUrl: job.photoUrl,
-      audioSrc, // 🔊 passa o áudio dinâmico para o Remotion
+      audioSrc, // passa a URL do WAV para o <Audio /> no Remotion
     },
     crf: 24,
     jpegQuality: 70,
@@ -272,9 +314,11 @@ const runRenderJob = async (job: RenderJob) => {
   // limpa arquivo de vídeo local
   fs.unlink(tempOutput, () => {});
 
-  // limpa áudio local depois que já foi usado
-  const localAudioPath = path.join(rendersDir, `audio-${job.id}.wav`);
-  fs.unlink(localAudioPath, () => {});
+  // limpa áudios locais (wav + mp3)
+  const localWavPath = path.join(rendersDir, `audio-${job.id}.wav`);
+  const localMp3Path = path.join(rendersDir, `audio-${job.id}.mp3`);
+  fs.unlink(localWavPath, () => {});
+  fs.unlink(localMp3Path, () => {});
 
   job.status = "done";
   job.videoUrl = videoUrl;
