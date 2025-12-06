@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import {
   AbsoluteFill,
   Video,
@@ -9,7 +9,9 @@ import {
   spring,
   interpolate,
   Img,
-  Audio, // 🔊 componente de áudio do Remotion
+  Audio as RemotionAudio, // 👈 renomeei para não conflitar com window.Audio
+  delayRender,
+  continueRender,
 } from "remotion";
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
@@ -166,16 +168,73 @@ export const MyComp: React.FC<NoelCompProps> = ({
   const safeAudioSrc =
     audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
 
+  // 🔥 DEBUG 1: ver exatamente o que chegou de áudio
+  console.log("🎧 [REMOTION DEBUG] audioSrc recebido no MyComp:", audioSrc);
+  console.log("🎧 [REMOTION DEBUG] safeAudioSrc (normalizado):", safeAudioSrc);
+
+  // 🔥 DEBUG 2: testar se o áudio realmente carrega no browser do Remotion
+  const handleRef = useRef<number | null>(null);
+  if (handleRef.current === null) {
+    handleRef.current = delayRender("Testando carregamento do áudio dinâmico");
+  }
+
+  useEffect(() => {
+    const handle = handleRef.current;
+    if (handle === null) return;
+
+    if (!safeAudioSrc) {
+      console.warn(
+        "⚠ [REMOTION DEBUG] Nenhum safeAudioSrc definido. Nada para carregar."
+      );
+      continueRender(handle);
+      return;
+    }
+
+    console.log(
+      "🎧 [REMOTION DEBUG] Tentando carregar áudio via HTMLAudio:",
+      safeAudioSrc
+    );
+
+    // usa o Audio nativo do browser (não o RemotionAudio)
+    const testAudio = new window.Audio(safeAudioSrc);
+
+    const onCanPlay = () => {
+      console.log(
+        "✅ [REMOTION DEBUG] ÁUDIO CARREGOU COM SUCESSO (canplaythrough):",
+        safeAudioSrc
+      );
+      continueRender(handle);
+    };
+
+    const onError = (e: any) => {
+      console.error(
+        "❌ [REMOTION DEBUG] FALHA AO CARREGAR ÁUDIO (HTMLAudio error):",
+        safeAudioSrc,
+        e
+      );
+      continueRender(handle);
+    };
+
+    testAudio.addEventListener("canplaythrough", onCanPlay);
+    testAudio.addEventListener("error", onError);
+
+    return () => {
+      testAudio.removeEventListener("canplaythrough", onCanPlay);
+      testAudio.removeEventListener("error", onError);
+      testAudio.pause();
+    };
+  }, [safeAudioSrc]);
+
   return (
     <AbsoluteFill>
       {/* vídeo base (mudo, o áudio é só o dinâmico) */}
-      <Video src={staticFile("videonoel-h264.mp4")} volume={0} />
+      <Video src={staticFile("videonoel-h264.mp4")} />
 
       {/* trecho POV da carta: nome + foto + ÁUDIO */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
         {/* 🔊 áudio só toca nesse trecho POV */}
         {safeAudioSrc && (
-          <Audio
+          <RemotionAudio
             src={safeAudioSrc}
             // se quiser, dá para controlar fade-in/fade-out com "volume={(f) => ...}"
           />
