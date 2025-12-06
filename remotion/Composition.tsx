@@ -9,7 +9,7 @@ import {
   spring,
   interpolate,
   Img,
-  Audio, // 🔊 import do áudio
+  Audio, // 🔊 componente de áudio do Remotion
 } from "remotion";
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
@@ -19,7 +19,7 @@ import { DistressedNameCanvas } from "./DistressedTextCanvas";
 export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
-  audioSrc?: string; // 🔊 áudio dinâmico (ElevenLabs)
+  audioSrc?: string; // 🔊 áudio dinâmico (ElevenLabs / Railway)
 };
 
 /* ------------ MAPA DE FRAMES ------------ */
@@ -122,7 +122,7 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
       style={{
         position: "absolute",
 
-        // 🔥 POSIÇÃO PERFETA E COMPATÍVEL COM O LAYOUT LOCAL
+        // 🔥 POSIÇÃO PERFEITA E COMPATÍVEL COM O LAYOUT LOCAL
         top: 260,
         left: "50%",
         transform: "translateX(-50%)",
@@ -149,12 +149,6 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   );
 };
 
-/* ------------ URL DO SERVIDOR PARA FALLBACK ------------ */
-
-const SERVER_URL =
-  process.env.SERVER_URL ??
-  "https://remotion-railway-production.up.railway.app";
-
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
 export const MyComp: React.FC<NoelCompProps> = ({
@@ -166,20 +160,27 @@ export const MyComp: React.FC<NoelCompProps> = ({
 
   const safePhotoUrl =
     photoUrl && photoUrl.trim() !== ""
-      ? photoUrl
-      : `${SERVER_URL}/photo-placeholder.jpg`;
+      ? photoUrl.trim()
+      : staticFile("photo-placeholder.jpg"); // 🔁 fallback local
 
   const safeAudioSrc =
     audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
 
   return (
     <AbsoluteFill>
-      {/* vídeo base */}
+      {/* vídeo base (mudo, o áudio é só o dinâmico) */}
       <Video src={staticFile("videonoel-h264.mp4")} volume={0} />
 
       {/* trecho POV da carta: nome + foto + ÁUDIO */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {safeAudioSrc && <Audio src={safeAudioSrc} />} {/* 🔊 só aqui */}
+        {/* 🔊 áudio só toca nesse trecho POV */}
+        {safeAudioSrc && (
+          <Audio
+            src={safeAudioSrc}
+            // se quiser, dá para controlar fade-in/fade-out com "volume={(f) => ...}"
+          />
+        )}
+
         <NameOverlay name={safeName} />
         <PhotoOnLetter photoUrl={safePhotoUrl} />
       </Sequence>
