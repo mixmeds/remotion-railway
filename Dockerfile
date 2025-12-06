@@ -1,7 +1,6 @@
 FROM node:lts-bookworm
 
-
-# Install dependencies required for chromium
+# Install dependencies required for chromium + ffmpeg
 RUN apt-get update && apt-get install -y \
   libnss3 \
   libdbus-1-3 \
@@ -14,8 +13,9 @@ RUN apt-get update && apt-get install -y \
   libxcomposite1 \
   libxdamage1 \
   libatk-bridge2.0-0 \
-  libcups2
-
+  libcups2 \
+  ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
