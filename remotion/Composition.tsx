@@ -158,7 +158,7 @@ export const MyComp: React.FC<NoelCompProps> = ({
   return (
     <AbsoluteFill>
       {/* vídeo base mutado */}
-      <Video src={staticFile("videonoel-h264.mp4")} volume={0} />
+      <Video src={staticFile("videonoel-h264.mp4")} />
 
       {/* trecho POV (nome, foto, áudio) */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
