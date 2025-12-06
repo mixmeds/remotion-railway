@@ -145,7 +145,6 @@ const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> =
 const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
   if (!ELEVENLABS_VOICE_ID) throw new Error("ELEVENLABS_VOICE_ID não configurada.");
-  if (!SERVER_URL) throw new Error("SERVER_URL não configurada.");
 
   const text = buildLine(name);
   console.log("📝 Texto enviado para ElevenLabs:", text);
@@ -185,19 +184,34 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
   await convertMp3ToWav(mp3Path, wavPath);
   console.log("💾 WAV salvo em:", wavPath);
 
-  const audioUrl = `${SERVER_URL!.replace(/\/$/, "")}/renders/audio-${jobId}.wav`;
-  console.log("🔗 URL final do áudio:", audioUrl);
+  // 🔥 Tentamos usar R2 primeiro
+  let finalUrl: string | null = null;
 
-  // opcional: mandar WAV pro R2
   try {
     const key = `audios/${jobId}.wav`;
     const urlR2 = await uploadToR2(wavPath, key, "audio/wav");
-    if (urlR2) console.log("☁️ Áudio enviado pro R2:", urlR2);
+    if (urlR2) {
+      console.log("☁️ Áudio enviado pro R2:", urlR2);
+      finalUrl = urlR2;
+    } else {
+      console.warn("⚠️ uploadToR2 não retornou URL, fallback para SERVER_URL.");
+    }
   } catch (e) {
-    console.warn("⚠️ Falha no upload do áudio pro R2:", e);
+    console.warn("⚠️ Falha no upload do áudio pro R2, usando fallback local:", e);
   }
 
-  return audioUrl;
+  if (!finalUrl) {
+    if (!SERVER_URL) {
+      throw new Error(
+        "SERVER_URL não configurada e não foi possível usar URL do R2 para o áudio."
+      );
+    }
+    finalUrl = `${SERVER_URL.replace(/\/$/, "")}/renders/audio-${jobId}.wav`;
+  }
+
+  console.log("🔗 URL final do áudio (usada no Remotion):", finalUrl);
+
+  return finalUrl;
 };
 
 /* -------------------------------------------------------------------------- */
