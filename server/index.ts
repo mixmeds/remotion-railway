@@ -27,10 +27,6 @@ if (!fs.existsSync(rendersDir)) {
 // Servir os arquivos locais (áudio temporário, vídeo temporário se quiser testar)
 app.use("/renders", express.static(rendersDir));
 
-/* -------------------------------------------------------------------------- */
-/*                         VARIÁVEIS DE AMBIENTE                               */
-/* -------------------------------------------------------------------------- */
-
 const {
   R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY,
@@ -113,7 +109,7 @@ const getBundledLocation = async () => {
 
 const buildNoelLine = (name: string) => {
   const safeName = name.trim() || "meu amigo";
-  // Texto simples (você pode trocar pelo que a gente combinou antes)
+  // Texto simples (pode ajustar depois pra usar as tags/emotion certinho)
   return `${safeName}, você é alguém muito especial… mais do que imagina.`;
 };
 
@@ -125,14 +121,15 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
   const text = buildNoelLine(name);
   console.log(`🗣️ Gerando áudio ElevenLabs para "${name}"...`);
 
-  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`;
+  // 🔥 Agora já pedimos WAV (PCM 44.1kHz) direto
+  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=pcm_44100`;
 
   const res = await fetch(endpoint, {
     method: "POST",
     headers: {
       "xi-api-key": ELEVENLABS_API_KEY,
       "Content-Type": "application/json",
-      Accept: "audio/mpeg",
+      Accept: "audio/wav",
     },
     body: JSON.stringify({
       text,
@@ -150,20 +147,20 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
     throw new Error(`Erro ElevenLabs: ${await res.text()}`);
   }
 
-  const mp3Buffer = Buffer.from(await res.arrayBuffer());
-  const localAudioPath = path.join(rendersDir, `audio-${jobId}.mp3`);
+  const audioBuffer = Buffer.from(await res.arrayBuffer());
+  const localAudioPath = path.join(rendersDir, `audio-${jobId}.wav`);
 
   // salva local (usado pelo Remotion)
-  await fsPromises.writeFile(localAudioPath, mp3Buffer);
+  await fsPromises.writeFile(localAudioPath, audioBuffer);
 
   // monta URL local que o Chrome do Remotion vai acessar
   const baseServer = SERVER_URL.replace(/\/$/, "");
-  const localAudioUrl = `${baseServer}/renders/audio-${jobId}.mp3`;
+  const localAudioUrl = `${baseServer}/renders/audio-${jobId}.wav`;
 
   // tenta subir pro R2 só para persistir (não dependemos disso pro render)
   try {
-    const objectKey = `audios/${jobId}.mp3`;
-    const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/mpeg");
+    const objectKey = `audios/${jobId}.wav`;
+    const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/wav");
     if (audioUrlR2) {
       console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
     }
@@ -197,12 +194,6 @@ const queue: string[] = [];
 let isProcessing = false;
 
 const nowISO = () => new Date().toISOString();
-
-const enqueueJob = (job: RenderJob) => {
-  jobs.set(job.id, job);
-  queue.push(job.id);
-  processQueue();
-};
 
 const processQueue = async () => {
   if (isProcessing) return;
@@ -282,7 +273,7 @@ const runRenderJob = async (job: RenderJob) => {
   fs.unlink(tempOutput, () => {});
 
   // limpa áudio local depois que já foi usado
-  const localAudioPath = path.join(rendersDir, `audio-${job.id}.mp3`);
+  const localAudioPath = path.join(rendersDir, `audio-${job.id}.wav`);
   fs.unlink(localAudioPath, () => {});
 
   job.status = "done";
@@ -320,14 +311,16 @@ app.post("/render", (req, res) => {
     updatedAt: now,
   };
 
-  console.log(`🧾 Novo job enfileirado: ${jobId} (name="${name}")`);
-  enqueueJob(job);
+  jobs.set(jobId, job);
+  queue.push(jobId);
+  processQueue();
 
   res.json({ ok: true, jobId });
 });
 
-app.get("/job/:id", (req, res) => {
-  const job = jobs.get(req.params.id);
+app.get("/jobs/:id", (req, res) => {
+  const { id } = req.params;
+  const job = jobs.get(id);
   if (!job) {
     return res.status(404).json({ ok: false, error: "Job não encontrado" });
   }
