@@ -4,27 +4,32 @@ import fs from "fs";
 import fsPromises from "fs/promises";
 import { createReadStream } from "fs";
 import { randomUUID } from "crypto";
-import { spawn } from "child_process";
 import { bundle } from "@remotion/bundler";
 import { getCompositions, renderMedia } from "@remotion/renderer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 /* -------------------------------------------------------------------------- */
-/*                               SETUP BÁSICO                                  */
+/*                               APP EXPRESS                                  */
 /* -------------------------------------------------------------------------- */
 
 const app = express();
 app.use(express.json());
 
-const publicDir = path.join(process.cwd(), "public");
-const rendersDir = path.join(process.cwd(), "renders");
+// /public → ink-texture.webp, photo-placeholder.jpg etc.
+app.use(express.static(path.join(process.cwd(), "public")));
 
+// Diretório para salvar vídeos/áudios localmente
+const rendersDir = path.join(process.cwd(), "renders");
 if (!fs.existsSync(rendersDir)) {
   fs.mkdirSync(rendersDir, { recursive: true });
 }
 
-app.use(express.static(publicDir));
+// Servir os arquivos locais (áudio temporário, vídeo temporário se quiser testar)
 app.use("/renders", express.static(rendersDir));
+
+/* -------------------------------------------------------------------------- */
+/*                         VARIÁVEIS DE AMBIENTE                               */
+/* -------------------------------------------------------------------------- */
 
 const {
   R2_ACCESS_KEY_ID,
@@ -38,11 +43,11 @@ const {
 } = process.env;
 
 if (!SERVER_URL) {
-  console.warn("⚠️ SERVER_URL não definido. Ex: https://meuservidor.railway.app");
+  console.warn("⚠️ SERVER_URL não definido. Ex: https://meuapp.railway.app");
 }
 
 /* -------------------------------------------------------------------------- */
-/*                               CLIENTE R2                                    */
+/*                               CONFIG R2                                     */
 /* -------------------------------------------------------------------------- */
 
 let r2Client: S3Client | null = null;
@@ -56,31 +61,27 @@ if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET && R2_ACCOUNT_ID) {
       secretAccessKey: R2_SECRET_ACCESS_KEY,
     },
   });
-  console.log("✅ R2 configurado.");
+  console.log("✅ R2 configurado com sucesso.");
 } else {
-  console.warn("⚠️ R2 não configurado completamente, upload será ignorado.");
+  console.warn("⚠️ R2 não configurado. Upload para R2 será ignorado.");
 }
 
-const uploadToR2 = async (
-  filePath: string,
-  objectKey: string,
-  mime: string
-): Promise<string> => {
+const uploadToR2 = async (filePath: string, objectKey: string, mime: string) => {
   if (!r2Client || !R2_BUCKET || !R2_PUBLIC_BASE_URL) {
-    console.warn("⚠️ R2 indisponível, pulando upload.");
+    console.warn("⚠️ uploadToR2 chamado, mas R2 não está totalmente configurado.");
     return "";
   }
 
   const fileStream = createReadStream(filePath);
 
-  await r2Client.send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET,
-      Key: objectKey,
-      Body: fileStream,
-      ContentType: mime,
-    })
-  );
+  const command = new PutObjectCommand({
+    Bucket: R2_BUCKET,
+    Key: objectKey,
+    Body: fileStream,
+    ContentType: mime,
+  });
+
+  await r2Client.send(command);
 
   const base = R2_PUBLIC_BASE_URL.replace(/\/$/, "");
   return `${base}/${objectKey}`;
@@ -92,64 +93,39 @@ const uploadToR2 = async (
 
 let bundledLocation: string | null = null;
 
-const getBundledLocation = async (): Promise<string> => {
-  if (bundledLocation) return bundledLocation;
+const getBundledLocation = async () => {
+  if (bundledLocation) {
+    return bundledLocation;
+  }
 
-  console.log("📦 Gerando bundle Remotion...");
+  console.log("📦 Gerando bundle do Remotion...");
   bundledLocation = await bundle({
     entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
+    webpackOverride: (config) => config,
   });
-  console.log("✅ Bundle pronto:", bundledLocation);
-
+  console.log("✅ Bundle pronto");
   return bundledLocation;
 };
 
 /* -------------------------------------------------------------------------- */
-/*                       ELEVENLABS + FFMPEG (MP3 → WAV)                      */
+/*                       ELEVENLABS — ÁUDIO DINÂMICO                           */
 /* -------------------------------------------------------------------------- */
 
-const buildLine = (name: string): string => {
-  const safe = name.trim() || "meu amigo";
-  return `${safe}, você é alguém muito especial… mais do que imagina.`;
-};
-
-const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    console.log("🎛️ Convertendo MP3 → WAV com ffmpeg...");
-    const ff = spawn("ffmpeg", [
-      "-y",
-      "-i",
-      inputPath,
-      "-acodec",
-      "pcm_s16le",
-      "-ar",
-      "44100",
-      outputPath,
-    ]);
-
-    ff.stderr.on("data", (d) => console.log("[ffmpeg]", d.toString()));
-
-    ff.on("close", (code) => {
-      console.log("🎛️ ffmpeg saiu com código:", code);
-      if (code === 0) resolve();
-      else reject(new Error("ffmpeg falhou com código " + code));
-    });
-
-    ff.on("error", (err) => {
-      console.error("❌ Erro ao spawnar ffmpeg:", err);
-      reject(err);
-    });
-  });
+const buildNoelLine = (name: string) => {
+  const safeName = name.trim() || "meu amigo";
+  // Texto simples (você pode trocar pelo que a gente combinou antes)
+  return `${safeName}, você é alguém muito especial… mais do que imagina.`;
 };
 
 const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
   if (!ELEVENLABS_VOICE_ID) throw new Error("ELEVENLABS_VOICE_ID não configurada.");
+  if (!SERVER_URL) throw new Error("SERVER_URL não configurada.");
 
-  const text = buildLine(name);
-  console.log("📝 Texto enviado para ElevenLabs:", text);
+  const text = buildNoelLine(name);
+  console.log(`🗣️ Gerando áudio ElevenLabs para "${name}"...`);
 
-  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128`;
+  const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`;
 
   const res = await fetch(endpoint, {
     method: "POST",
@@ -170,58 +146,37 @@ const generateNoelAudio = async (jobId: string, name: string): Promise<string> =
     }),
   });
 
-  console.log("🌐 ElevenLabs status:", res.status, res.statusText);
-
   if (!res.ok) {
-    const body = await res.text();
-    console.error("❌ ElevenLabs erro:", body);
-    throw new Error(body);
+    throw new Error(`Erro ElevenLabs: ${await res.text()}`);
   }
 
-  const buffer = Buffer.from(await res.arrayBuffer());
-  console.log("📥 MP3 recebido:", buffer.length, "bytes");
+  const mp3Buffer = Buffer.from(await res.arrayBuffer());
+  const localAudioPath = path.join(rendersDir, `audio-${jobId}.mp3`);
 
-  const mp3Path = path.join(rendersDir, `audio-${jobId}.mp3`);
-  const wavPath = path.join(rendersDir, `audio-${jobId}.wav`);
+  // salva local (usado pelo Remotion)
+  await fsPromises.writeFile(localAudioPath, mp3Buffer);
 
-  await fsPromises.writeFile(mp3Path, buffer);
-  console.log("💾 MP3 salvo em:", mp3Path);
+  // monta URL local que o Chrome do Remotion vai acessar
+  const baseServer = SERVER_URL.replace(/\/$/, "");
+  const localAudioUrl = `${baseServer}/renders/audio-${jobId}.mp3`;
 
-  await convertMp3ToWav(mp3Path, wavPath);
-  console.log("💾 WAV salvo em:", wavPath);
-
-  // 🔥 Tentamos usar R2 primeiro
-  let finalUrl: string | null = null;
-
+  // tenta subir pro R2 só para persistir (não dependemos disso pro render)
   try {
-    const key = `audios/${jobId}.wav`;
-    const urlR2 = await uploadToR2(wavPath, key, "audio/wav");
-    if (urlR2) {
-      console.log("☁️ Áudio enviado pro R2:", urlR2);
-      finalUrl = urlR2;
-    } else {
-      console.warn("⚠️ uploadToR2 não retornou URL, fallback para SERVER_URL.");
+    const objectKey = `audios/${jobId}.mp3`;
+    const audioUrlR2 = await uploadToR2(localAudioPath, objectKey, "audio/mpeg");
+    if (audioUrlR2) {
+      console.log(`🔊 Áudio enviado para R2: ${audioUrlR2}`);
     }
-  } catch (e) {
-    console.warn("⚠️ Falha no upload do áudio pro R2, usando fallback local:", e);
+  } catch (err) {
+    console.error("⚠️ Falha ao enviar áudio para R2 (seguindo só com o local):", err);
   }
 
-  if (!finalUrl) {
-    if (!SERVER_URL) {
-      throw new Error(
-        "SERVER_URL não configurada e não foi possível usar URL do R2 para o áudio."
-      );
-    }
-    finalUrl = `${SERVER_URL.replace(/\/$/, "")}/renders/audio-${jobId}.wav`;
-  }
-
-  console.log("🔗 URL final do áudio (usada no Remotion):", finalUrl);
-
-  return finalUrl;
+  console.log(`🎧 Áudio local para render: ${localAudioUrl}`);
+  return localAudioUrl; // <- É ESSA URL que vai para o Audio src no Remotion
 };
 
 /* -------------------------------------------------------------------------- */
-/*                              FILA / JOBS                                    */
+/*                              FILA DE RENDER                                 */
 /* -------------------------------------------------------------------------- */
 
 type RenderStatus = "queued" | "processing" | "uploading" | "done" | "error";
@@ -241,84 +196,15 @@ const jobs = new Map<string, RenderJob>();
 const queue: string[] = [];
 let isProcessing = false;
 
-const nowISO = (): string => new Date().toISOString();
+const nowISO = () => new Date().toISOString();
 
-/* -------------------------------------------------------------------------- */
-/*                           EXECUÇÃO DO JOB                                   */
-/* -------------------------------------------------------------------------- */
-
-const runRenderJob = async (job: RenderJob): Promise<void> => {
-  console.log(`🎬 [JOB ${job.id}] Iniciando runRenderJob...`);
-
-  const serveUrl = await getBundledLocation();
-
-  // 1) Gera o áudio dinâmico primeiro
-  const audioSrc = await generateNoelAudio(job.id, job.name);
-
-  // 2) inputProps finais que VÃO direto para o MyComp
-  const inputProps = {
-    name: job.name,
-    photoUrl: job.photoUrl,
-    audioSrc,
-  };
-
-  console.log(`📦 [JOB ${job.id}] inputProps finais para renderMedia:`, inputProps);
-
-  // 3) Descobre a composição "noel" como objeto
-  const comps = await getCompositions(serveUrl, {
-    inputProps,
-  });
-
-  console.log(
-    `📽️ [JOB ${job.id}] Composições disponíveis:`,
-    comps.map((c) => c.id)
-  );
-
-  const composition = comps.find((c) => c.id === "noel");
-  if (!composition) {
-    throw new Error("Composição 'noel' não encontrada.");
-  }
-
-  console.log(
-    `🎯 [JOB ${job.id}] Composição 'noel' selecionada. defaultProps:`,
-    (composition as any).defaultProps
-  );
-
-  const outPath = path.join(rendersDir, `render-${job.id}.mp4`);
-  console.log(`🎞️ [JOB ${job.id}] Render saída em:`, outPath);
-
-  await renderMedia({
-    serveUrl,
-    composition,
-    codec: "h264",
-    outputLocation: outPath,
-    inputProps,
-    crf: 24,
-    jpegQuality: 70,
-  });
-
-  console.log(`✅ [JOB ${job.id}] Render concluído.`);
-
-  job.status = "uploading";
-  job.updatedAt = nowISO();
+const enqueueJob = (job: RenderJob) => {
   jobs.set(job.id, job);
-
-  const key = `renders/${job.id}.mp4`;
-  const videoUrl = await uploadToR2(outPath, key, "video/mp4");
-
-  fs.unlink(outPath, () => {});
-  fs.unlink(path.join(rendersDir, `audio-${job.id}.mp3`), () => {});
-  fs.unlink(path.join(rendersDir, `audio-${job.id}.wav`), () => {});
-
-  job.status = "done";
-  job.videoUrl = videoUrl;
-  job.updatedAt = nowISO();
-  jobs.set(job.id, job);
-
-  console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
+  queue.push(job.id);
+  processQueue();
 };
 
-const processQueue = async (): Promise<void> => {
+const processQueue = async () => {
   if (isProcessing) return;
   const nextId = queue.shift();
   if (!nextId) return;
@@ -332,43 +218,101 @@ const processQueue = async (): Promise<void> => {
   jobs.set(job.id, job);
 
   try {
+    console.log(`🎬 Processando job ${job.id}...`);
     await runRenderJob(job);
-  } catch (e: any) {
-    console.error(`❌ [JOB ${job.id}] Erro:`, e);
+  } catch (err: any) {
+    console.error("❌ Erro ao processar job:", err);
     job.status = "error";
-    job.error = e?.message ?? String(e);
+    job.error = err?.message ?? String(err);
+  } finally {
     job.updatedAt = nowISO();
     jobs.set(job.id, job);
-  } finally {
+
     isProcessing = false;
-    if (queue.length > 0) {
-      processQueue();
-    }
+    if (queue.length > 0) processQueue();
   }
 };
 
 /* -------------------------------------------------------------------------- */
-/*                                   ROTAS                                     */
+/*                                RENDER JOB                                   */
+/* -------------------------------------------------------------------------- */
+
+const runRenderJob = async (job: RenderJob) => {
+  const serveUrl = await getBundledLocation();
+
+  // Primeiro só pra ler a composição
+  const comps = await getCompositions(serveUrl, {
+    inputProps: { name: job.name, photoUrl: job.photoUrl },
+  });
+
+  const composition = comps.find((c) => c.id === "noel");
+  if (!composition) {
+    throw new Error("Composição 'noel' não encontrada.");
+  }
+
+  // Gera áudio dinâmico (URL local)
+  const audioSrc = await generateNoelAudio(job.id, job.name);
+
+  const tempOutput = path.join(rendersDir, `render-${job.id}.mp4`);
+
+  console.log("🎞️ Iniciando render do Remotion...");
+  await renderMedia({
+    serveUrl,
+    composition,
+    codec: "h264",
+    outputLocation: tempOutput,
+    inputProps: {
+      name: job.name,
+      photoUrl: job.photoUrl,
+      audioSrc, // 🔊 passa o áudio dinâmico para o Remotion
+    },
+    crf: 24,
+    jpegQuality: 70,
+  });
+  console.log("✅ Render Remotion finalizado, iniciando upload do vídeo...");
+
+  job.status = "uploading";
+  job.updatedAt = nowISO();
+  jobs.set(job.id, job);
+
+  const objectKey = `renders/${job.id}.mp4`;
+  const videoUrl = await uploadToR2(tempOutput, objectKey, "video/mp4");
+
+  // limpa arquivo de vídeo local
+  fs.unlink(tempOutput, () => {});
+
+  // limpa áudio local depois que já foi usado
+  const localAudioPath = path.join(rendersDir, `audio-${job.id}.mp3`);
+  fs.unlink(localAudioPath, () => {});
+
+  job.status = "done";
+  job.videoUrl = videoUrl;
+  job.updatedAt = nowISO();
+  jobs.set(job.id, job);
+
+  console.log(`🎉 Job ${job.id} finalizado. Vídeo em: ${videoUrl}`);
+};
+
+/* -------------------------------------------------------------------------- */
+/*                                    ROTAS                                   */
 /* -------------------------------------------------------------------------- */
 
 app.get("/", (_req, res) => {
-  res.json({ ok: true, message: "API rodando." });
+  res.json({ ok: true, message: "API funcionando." });
 });
 
 app.post("/render", (req, res) => {
   const { name, photoUrl } = req.body as { name?: string; photoUrl?: string };
 
   if (!name || !photoUrl) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "Envie name e photoUrl." });
+    return res.status(400).json({ ok: false, error: "Envie name e photoUrl." });
   }
 
-  const id = randomUUID();
+  const jobId = randomUUID();
   const now = nowISO();
 
   const job: RenderJob = {
-    id,
+    id: jobId,
     name,
     photoUrl,
     status: "queued",
@@ -376,14 +320,13 @@ app.post("/render", (req, res) => {
     updatedAt: now,
   };
 
-  jobs.set(id, job);
-  queue.push(id);
-  processQueue();
+  console.log(`🧾 Novo job enfileirado: ${jobId} (name="${name}")`);
+  enqueueJob(job);
 
-  res.json({ ok: true, jobId: id });
+  res.json({ ok: true, jobId });
 });
 
-app.get("/jobs/:id", (req, res) => {
+app.get("/job/:id", (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) {
     return res.status(404).json({ ok: false, error: "Job não encontrado" });
@@ -397,5 +340,5 @@ app.get("/jobs/:id", (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`🚀 Server ouvindo na porta ${PORT}`);
+  console.log(`🚀 Rodando na porta ${PORT}`);
 });
