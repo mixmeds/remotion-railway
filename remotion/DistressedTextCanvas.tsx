@@ -47,64 +47,31 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
     const safeProgressRaw = Number.isFinite(progress) ? progress : 0;
     const p = Math.min(Math.max(safeProgressRaw, 0), 1);
 
+    // ✅ limpa tudo e deixa o fundo TRANSPARENTE
     ctx.clearRect(0, 0, width, height);
 
-    // Fundo levemente texturizado (papel) – estático
-    const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, "#fdf6e8");
-    gradient.addColorStop(1, "#f4e1c2");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, width, height);
+    // --- a partir daqui, só desenhamos texto + respingos ---
 
-    // leve ruído de papel (permanente, sem depender de frame)
-    ctx.save();
-    const noiseDensity = 0.13;
-    ctx.fillStyle = "rgba(120, 90, 50, 0.06)";
-    const step = 12;
-    for (let y = 0; y < height; y += step) {
-      for (let x = 0; x < width; x += step) {
-        const h = hash(x * 0.13 + y * 0.77);
-        if (h < noiseDensity) {
-          const r = 0.8 + hash(x + y * 2) * 1.2;
-          ctx.beginPath();
-          ctx.arc(
-            x + hash(x * 3 + y) * step,
-            y + hash(y * 5 + x) * step,
-            r,
-            0,
-            Math.PI * 2
-          );
-          ctx.fill();
-        }
-      }
-    }
-    ctx.restore();
-
-    // Configuração do texto
     ctx.save();
     ctx.translate(width / 2, height / 2);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = `${fontSize}px "Cinzel", "Times New Roman", serif`;
 
-    // Calcula quantos caracteres já "apareceram"
+    // quantos caracteres já "apareceram"
     const eased = p < 0.0001 ? 0 : Math.pow(p, 0.85); // ease-out sutil
     const visibleLength =
-      eased <= 0
-        ? 0
-        : Math.max(1, Math.floor(text.length * eased));
+      eased <= 0 ? 0 : Math.max(1, Math.floor(text.length * eased));
     const visibleText = text.slice(0, visibleLength);
 
-    // Opacidade geral da tinta, de 0.7 → 1.0
     const globalAlpha = 0.7 + 0.3 * eased;
 
-    // Desenha o texto letra por letra com pequenas variações fixas
     const letters = visibleText.split("");
     const spacing = fontSize * 0.6;
     const totalWidth = Math.max(letters.length - 1, 0) * spacing;
     let startX = -totalWidth / 2;
 
-    // sombra/glow geral (estático)
+    // glow geral
     ctx.shadowColor = glowColor;
     ctx.shadowBlur = 15;
 
@@ -112,12 +79,11 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
       const ch = letters[i];
       const baseSeed = i + text.length * 31;
 
-      // variações fixas por letra (não dependem de frame)
       const offsetX =
         (hash(baseSeed) - 0.5) * wobble * 6 * roughness;
       const offsetY =
         (hash(baseSeed + 10) - 0.5) * wobble * 4 * roughness;
-      const angle = (hash(baseSeed + 20) - 0.5) * 0.05 * roughness; // radianos
+      const angle = (hash(baseSeed + 20) - 0.5) * 0.05 * roughness;
       const inkVariation =
         0.8 + hash(baseSeed + 30) * 0.4 * inkBleed;
 
@@ -125,12 +91,12 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
       ctx.translate(startX + i * spacing + offsetX, offsetY);
       ctx.rotate(angle);
 
-      // "bordas" mais escuras
+      // tinta principal
       ctx.globalAlpha = globalAlpha * inkVariation;
       ctx.fillStyle = textColor;
       ctx.fillText(ch, 0, 0);
 
-      // leve highlight interno
+      // highlight leve
       ctx.globalAlpha = globalAlpha * 0.35;
       const highlight = ctx.createLinearGradient(
         -fontSize * 0.3,
@@ -148,7 +114,7 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
 
     ctx.restore();
 
-    // Pequenas manchas de tinta ao redor do texto (fixas)
+    // respingos de tinta em volta do nome (também transparentes)
     ctx.save();
     ctx.translate(width / 2, height / 2);
     const blobs = 18;
@@ -195,7 +161,7 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
       ref={canvasRef}
       style={{
         display: "block",
-        background: "transparent",
+        background: "transparent", // 👈 garante transparência
       }}
     />
   );
