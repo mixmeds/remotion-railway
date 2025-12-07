@@ -76,17 +76,20 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
 
 /* ------------ NAME OVERLAY ------------ */
 
-const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+const frame = useCurrentFrame();
+const { fps } = useVideoConfig();
 
-  const rawProgress = spring({
-    frame,
-    fps,
-    config: { damping: 22, stiffness: 80, mass: 1.2 },
-    durationInFrames: 70,
-  });
+const progress = spring({
+  frame,
+  fps,
+  config: {
+    damping: 15,
+    mass: 0.4,
+    stiffness: 90,
+  }
+});
 
+<DistressedNameCanvas text={name} progress={Math.min(progress, 1)} />
   const anticipation = interpolate(
     rawProgress,
     [0, 0.08, 0.2, 1],
