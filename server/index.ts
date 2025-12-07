@@ -297,8 +297,14 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   audioCodec: "aac",
   pixelFormat: "yuv420p",
   concurrency: Number(process.env.REMOTION_CONCURRENCY ?? 4),
-  ffmpegOverride: (args) => {
-    return ["-preset", process.env.FFMPEG_PRESET ?? "fast", ...args];
+  ffmpegOverride: ({ type, args }) => {
+    const preset = process.env.FFMPEG_PRESET ?? "fast";
+
+    // (opcional) log pra testar uma vez
+    console.log("[FFMPEG OVERRIDE]", type, "args antes:", args.join(" "));
+
+    // insere o -preset logo no começo
+    return ["-preset", preset, ...args];
   },
 });
 
