@@ -22,11 +22,19 @@ export type NoelCompProps = {
   audioSrc?: string;
 };
 
-/* ------------ MAPA DE FRAMES ------------ */
+/* ------------ CONFIGURAÇÃO DAS CENAS (R2) ------------ */
 
-const POV_LETTER_START = 700;
-const POV_LETTER_END = 940;
-const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
+const ENTRADA_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4";
+const DINAMICO_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-h264.mp4";
+const SAIDA_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4";
+
+// Durações em segundos (conforme informado)
+const ENTRADA_SECONDS = 23;
+const DINAMICO_SECONDS = 15;
+const SAIDA_SECONDS = 23;
 
 /* ------------ FOTO SOBRE A CARTA ------------ */
 
@@ -76,9 +84,25 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
 
 /* ------------ NAME OVERLAY ------------ */
 
-const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
-  const frame = useCurrentFrame();
+type NameOverlayProps = {
+  name: string;
+  /**
+   * Frame global em que a animação do nome deve começar.
+   * Usamos isso para alinhar com o início da parte dinâmica
+   * (após a entrada mágica).
+   */
+  startFrame?: number;
+};
+
+const NameOverlay: React.FC<NameOverlayProps> = ({ name, startFrame }) => {
+  const globalFrame = useCurrentFrame();
   const { fps } = useVideoConfig();
+
+  // Frame local relativo ao início da animação
+  const frame =
+    typeof startFrame === "number"
+      ? Math.max(0, globalFrame - startFrame)
+      : globalFrame;
 
   const rawProgress = spring({
     frame,
@@ -147,6 +171,12 @@ export const MyComp: React.FC<NoelCompProps> = ({
   photoUrl,
   audioSrc,
 }) => {
+  const { fps } = useVideoConfig();
+
+  const entradaDuration = Math.round(ENTRADA_SECONDS * fps);
+  const dinamicoDuration = Math.round(DINAMICO_SECONDS * fps);
+  const saidaDuration = Math.round(SAIDA_SECONDS * fps);
+
   const safeName = (name ?? "").trim() || "Amigo(a)";
   const safePhoto =
     photoUrl && photoUrl.trim() !== ""
@@ -161,15 +191,32 @@ export const MyComp: React.FC<NoelCompProps> = ({
 
   return (
     <AbsoluteFill>
-      {/* vídeo base mutado */}
-      <Video src={staticFile("videonoel-h264.mp4")} />
+      {/* ENTRADA MÁGICA PRÉ-RENDERIZADA (R2) */}
+      <Sequence from={0} durationInFrames={entradaDuration}>
+        <Video src={ENTRADA_URL} />
+      </Sequence>
 
-      {/* trecho POV (nome, foto, áudio) */}
-      <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {safeAudio && <AudioLayer src={safeAudio} />}
+      {/* PARTE DINÂMICA - VÍDEO BASE + NOME + FOTO + ÁUDIO */}
+      <Sequence from={entradaDuration} durationInFrames={dinamicoDuration}>
+        <AbsoluteFill>
+          {/* vídeo base dinâmico (sem entrada/saída) */}
+          <Video src={DINAMICO_URL} />
 
-        <NameOverlay name={safeName} />
-        <PhotoOnLetter photoUrl={safePhoto} />
+          {/* camada de áudio dinâmico */}
+          {safeAudio && <AudioLayer src={safeAudio} />}
+
+          {/* nome e foto sobre a carta */}
+          <NameOverlay name={safeName} startFrame={entradaDuration} />
+          <PhotoOnLetter photoUrl={safePhoto} />
+        </AbsoluteFill>
+      </Sequence>
+
+      {/* SAÍDA FINAL PRÉ-RENDERIZADA (R2) */}
+      <Sequence
+        from={entradaDuration + dinamicoDuration}
+        durationInFrames={saidaDuration}
+      >
+        <Video src={SAIDA_URL} />
       </Sequence>
     </AbsoluteFill>
   );
