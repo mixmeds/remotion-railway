@@ -37,6 +37,12 @@ const {
   SERVER_URL,
 } = process.env;
 
+// URLs das partes estáticas do vídeo Noel (no R2)
+const ENTRADA_VIDEO_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4";
+const SAIDA_VIDEO_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4";
+
 if (!SERVER_URL) {
   console.warn("⚠️ SERVER_URL não definido. Ex: https://meuservidor.railway.app");
 }
@@ -141,6 +147,51 @@ const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> =
     });
   });
 };
+
+const concatNoelVideos = (
+  jobId: string,
+  dynamicPath: string
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const finalPath = path.join(rendersDir, `render-${jobId}.mp4`);
+
+    console.log("🎬 Iniciando concatenação com ffmpeg...");
+    const ff = spawn("ffmpeg", [
+      "-y",
+      "-i",
+      ENTRADA_VIDEO_URL,
+      "-i",
+      dynamicPath,
+      "-i",
+      SAIDA_VIDEO_URL,
+      "-filter_complex",
+      "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]",
+      "-map",
+      "[outv]",
+      "-map",
+      "[outa]",
+      "-c:v",
+      "libx264",
+      "-c:a",
+      "aac",
+      finalPath,
+    ]);
+
+    ff.stderr.on("data", (d) => console.log("[ffmpeg concat]", d.toString()));
+
+    ff.on("close", (code) => {
+      console.log("🎬 ffmpeg concat saiu com código:", code);
+      if (code === 0) resolve(finalPath);
+      else reject(new Error("ffmpeg concat falhou com código " + code));
+    });
+
+    ff.on("error", (err) => {
+      console.error("❌ Erro ao spawnar ffmpeg concat:", err);
+      reject(err);
+    });
+  });
+};
+
 
 const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
@@ -284,40 +335,49 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
     (composition as any).defaultProps
   );
 
-  const outPath = path.join(rendersDir, `render-${job.id}.mp4`);
-  console.log(`🎞️ [JOB ${job.id}] Render saída em:`, outPath);
+  const dynamicOutPath = path.join(
+    rendersDir,
+    `render-dynamic-${job.id}.mp4`
+  );
+  console.log(`🎞️ [JOB ${job.id}] Render (apenas parte dinâmica) em:`, dynamicOutPath);
 
   await renderMedia({
-  serveUrl,
-  composition,
-  codec: "h264",
-  outputLocation: outPath,
-  inputProps,
-  crf: 24,
-  audioCodec: "aac",
-  pixelFormat: "yuv420p",
-  // defensivo: só mexe na concurrency se a env estiver válida
-  concurrency: process.env.REMOTION_CONCURRENCY
-    ? Number(process.env.REMOTION_CONCURRENCY)
-    : undefined,
-  // ⚠️ REMOVE ISSO POR ENQUANTO:
-  // ffmpegOverride: ({ type, args }) => {
-  //   const preset = process.env.FFMPEG_PRESET ?? "fast";
-  //   console.log("[FFMPEG OVERRIDE]", type, "args antes:", args.join(" "));
-  //   return ["-preset", preset, ...args];
-  // },
-});
+    serveUrl,
+    composition,
+    codec: "h264",
+    outputLocation: dynamicOutPath,
+    inputProps,
+    crf: 24,
+    audioCodec: "aac",
+    pixelFormat: "yuv420p",
+    // defensivo: só mexe na concurrency se a env estiver válida
+    concurrency: process.env.REMOTION_CONCURRENCY
+      ? Number(process.env.REMOTION_CONCURRENCY)
+      : undefined,
+    // ⚠️ KEEP DISABLED FOR NOW:
+    // ffmpegOverride: ({ type, args }) => {
+    //   const preset = process.env.FFMPEG_PRESET ?? "fast";
+    //   console.log("[FFMPEG OVERRIDE]", type, "args antes:", args.join(" "));
+    //   return ["-preset", preset, ...args];
+    // },
+  });
 
-  console.log(`✅ [JOB ${job.id}] Render concluído.`);
+  console.log(`✅ [JOB ${job.id}] Render dinâmico concluído.`);
+
+  // Agora faz o sanduíche: entrada (R2) + dinâmico (local) + saída (R2)
+  const finalOutPath = await concatNoelVideos(job.id, dynamicOutPath);
+  console.log(`🎬 [JOB ${job.id}] Vídeo final concatenado em:`, finalOutPath);
 
   job.status = "uploading";
   job.updatedAt = nowISO();
   jobs.set(job.id, job);
 
   const key = `renders/${job.id}.mp4`;
-  const videoUrl = await uploadToR2(outPath, key, "video/mp4");
+  const videoUrl = await uploadToR2(finalOutPath, key, "video/mp4");
 
-  fs.unlink(outPath, () => {});
+  // limpeza de arquivos temporários
+  fs.unlink(dynamicOutPath, () => {});
+  fs.unlink(finalOutPath, () => {});
   fs.unlink(path.join(rendersDir, `audio-${job.id}.mp3`), () => {});
   fs.unlink(path.join(rendersDir, `audio-${job.id}.wav`), () => {});
 
