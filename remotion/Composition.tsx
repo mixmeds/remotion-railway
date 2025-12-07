@@ -9,27 +9,26 @@ import {
   spring,
   interpolate,
   Img,
-  Audio, // 🔊 import do áudio
 } from "remotion";
 
 import { DistressedNameCanvas } from "./DistressedTextCanvas";
+import { AudioLayer } from "./AudioLayer";
 
 /* ------------ TIPAGEM DOS PROPS ------------ */
 
 export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
-  audioSrc?: string; // 🔊 áudio dinâmico (ElevenLabs)
+  audioSrc?: string;
 };
 
 /* ------------ MAPA DE FRAMES ------------ */
 
-// POV da carta (onde aparece nome e foto)
 const POV_LETTER_START = 700;
 const POV_LETTER_END = 940;
 const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
 
-/* ------------ FOTO SOBRE A CARTA (LAYOUT DO LOCAL) ------------ */
+/* ------------ FOTO SOBRE A CARTA ------------ */
 
 const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   const texture = staticFile("ink-texture.webp");
@@ -38,37 +37,28 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
     <div
       style={{
         position: "absolute",
-
-        // 🔥 POSIÇÃO E DIMENSÕES COPIADAS DO LOCAL
         top: 500,
         left: "50%",
         transform: "translateX(-50%)",
-
         width: 520,
         height: 300,
-
         borderRadius: 18,
         overflow: "hidden",
-
         background: "#dec8a4",
         boxShadow: "0 0 0 2px rgba(80, 50, 20, 0.25)",
       }}
     >
-      {/* FOTO COM FIT CORRETO */}
       <Img
         src={photoUrl}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
-
-          // mescla igual ao local (visual old paper)
           mixBlendMode: "multiply",
           filter: "sepia(0.5) contrast(0.95) saturate(0.9)",
         }}
       />
 
-      {/* TEXTURA DO PAPEL SOBRE A FOTO */}
       <div
         style={{
           position: "absolute",
@@ -84,7 +74,7 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
   );
 };
 
-/* ------------ NAME OVERLAY (LAYOUT DO LOCAL MANTIDO) ------------ */
+/* ------------ NAME OVERLAY ------------ */
 
 const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   const frame = useCurrentFrame();
@@ -121,12 +111,9 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
     <div
       style={{
         position: "absolute",
-
-        // 🔥 POSIÇÃO PERFETA E COMPATÍVEL COM O LAYOUT LOCAL
         top: 260,
         left: "50%",
         transform: "translateX(-50%)",
-
         pointerEvents: "none",
         background: "transparent",
         zIndex: 10,
@@ -149,12 +136,6 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   );
 };
 
-/* ------------ URL DO SERVIDOR PARA FALLBACK ------------ */
-
-const SERVER_URL =
-  process.env.SERVER_URL ??
-  "https://remotion-railway-production.up.railway.app";
-
 /* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
 
 export const MyComp: React.FC<NoelCompProps> = ({
@@ -163,25 +144,28 @@ export const MyComp: React.FC<NoelCompProps> = ({
   audioSrc,
 }) => {
   const safeName = (name ?? "").trim() || "Amigo(a)";
-
-  const safePhotoUrl =
+  const safePhoto =
     photoUrl && photoUrl.trim() !== ""
-      ? photoUrl
-      : `${SERVER_URL}/photo-placeholder.jpg`;
+      ? photoUrl.trim()
+      : staticFile("photo-placeholder.jpg");
 
-  const safeAudioSrc =
+  const safeAudio =
     audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
+
+  console.log("🎧 [REMOTION DEBUG] audioSrc recebido em MyComp:", audioSrc);
+  console.log("🎧 [REMOTION DEBUG] safeAudio normalizado:", safeAudio);
 
   return (
     <AbsoluteFill>
-      {/* vídeo base */}
+      {/* vídeo base mutado */}
       <Video src={staticFile("videonoel-h264.mp4")} />
 
-      {/* trecho POV da carta: nome + foto + ÁUDIO */}
+      {/* trecho POV (nome, foto, áudio) */}
       <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {safeAudioSrc && <Audio src={safeAudioSrc} />} {/* 🔊 só aqui */}
+        {safeAudio && <AudioLayer src={safeAudio} />}
+
         <NameOverlay name={safeName} />
-        <PhotoOnLetter photoUrl={safePhotoUrl} />
+        <PhotoOnLetter photoUrl={safePhoto} />
       </Sequence>
     </AbsoluteFill>
   );
