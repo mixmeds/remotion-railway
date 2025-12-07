@@ -288,14 +288,19 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`🎞️ [JOB ${job.id}] Render saída em:`, outPath);
 
   await renderMedia({
-    serveUrl,
-    composition,
-    codec: "h264",
-    outputLocation: outPath,
-    inputProps,
-    crf: 24,
-    jpegQuality: 70,
-  });
+  serveUrl,
+  composition,
+  codec: "h264",
+  outputLocation: outPath,
+  inputProps,
+  crf: 24,
+  audioCodec: "aac",
+  pixelFormat: "yuv420p",
+  concurrency: Number(process.env.REMOTION_CONCURRENCY ?? 4),
+  ffmpegOverride: (args) => {
+    return ["-preset", process.env.FFMPEG_PRESET ?? "fast", ...args];
+  },
+});
 
   console.log(`✅ [JOB ${job.id}] Render concluído.`);
 
