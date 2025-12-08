@@ -8,6 +8,7 @@ import { spawn } from "child_process";
 import { bundle } from "@remotion/bundler";
 import { getCompositions, renderMedia } from "@remotion/renderer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { createClient } from "@supabase/supabase-js";
 
 /* -------------------------------------------------------------------------- */
 /*                               SETUP BÁSICO                                  */
@@ -35,6 +36,9 @@ const {
   ELEVENLABS_API_KEY,
   ELEVENLABS_VOICE_ID,
   SERVER_URL,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  RAILWAY_EDGE_KEY,
 } = process.env;
 
 // URLs das partes estáticas do vídeo Noel (no R2)
@@ -108,6 +112,57 @@ const getBundledLocation = async (): Promise<string> => {
   console.log("✅ Bundle pronto:", bundledLocation);
 
   return bundledLocation;
+};
+
+/* -------------------------------------------------------------------------- */
+/*                     SUPABASE (ATUALIZAÇÃO DE STATUS)                        */
+/* -------------------------------------------------------------------------- */
+
+const supabase =
+  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    : null;
+
+if (!supabase) {
+  console.warn(
+    "⚠️ SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configurados. " +
+      "Atualização de status em video_requests será ignorada.",
+  );
+}
+
+const updateVideoRequestStatus = async (
+  requestId: string | undefined,
+  status: string,
+  extra: Record<string, any> = {}
+) => {
+  if (!supabase || !requestId) return;
+
+  try {
+    const { error } = await supabase
+      .from("video_requests")
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+        ...extra,
+      })
+      .eq("id", requestId);
+
+    if (error) {
+      console.error(
+        `❌ Erro ao atualizar video_requests (${requestId}) para status ${status}:`,
+        error,
+      );
+    } else {
+      console.log(
+        `✅ video_requests (${requestId}) atualizado para status ${status}.`,
+      );
+    }
+  } catch (e) {
+    console.error(
+      `❌ Exceção ao atualizar video_requests (${requestId}) para status ${status}:`,
+      e,
+    );
+  }
 };
 
 /* -------------------------------------------------------------------------- */
@@ -191,7 +246,6 @@ const concatNoelVideos = (
     });
   });
 };
-
 
 const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
@@ -286,6 +340,11 @@ type RenderJob = {
   updatedAt: string;
   videoUrl?: string;
   error?: string;
+  // Integração com Supabase / funil
+  requestId?: string;
+  userEmail?: string;
+  messageText?: string;
+  language?: string;
 };
 
 const jobs = new Map<string, RenderJob>();
@@ -301,6 +360,9 @@ const nowISO = (): string => new Date().toISOString();
 const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`🎬 [JOB ${job.id}] Iniciando runRenderJob...`);
 
+  // Atualiza status para "rendering" no Supabase (se requestId existir)
+  await updateVideoRequestStatus(job.requestId, "rendering");
+
   const serveUrl = await getBundledLocation();
 
   // 1) Gera o áudio dinâmico primeiro
@@ -311,6 +373,8 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
     name: job.name,
     photoUrl: job.photoUrl,
     audioSrc,
+    messageText: job.messageText,
+    language: job.language ?? "pt-BR",
   };
 
   console.log(`📦 [JOB ${job.id}] inputProps finais para renderMedia:`, inputProps);
@@ -387,6 +451,11 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   jobs.set(job.id, job);
 
   console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
+
+  // Atualiza Supabase para "ready" com a URL final do vídeo
+  await updateVideoRequestStatus(job.requestId, "ready", {
+    video_url: videoUrl,
+  });
 };
 
 const processQueue = async (): Promise<void> => {
@@ -410,6 +479,11 @@ const processQueue = async (): Promise<void> => {
     job.error = e?.message ?? String(e);
     job.updatedAt = nowISO();
     jobs.set(job.id, job);
+
+    // Atualiza Supabase para "error" se tiver requestId
+    await updateVideoRequestStatus(job.requestId, "error", {
+      error_message: job.error,
+    });
   } finally {
     isProcessing = false;
     if (queue.length > 0) {
@@ -426,13 +500,38 @@ app.get("/", (_req, res) => {
   res.json({ ok: true, message: "API rodando." });
 });
 
-app.post("/render", (req, res) => {
-  const { name, photoUrl } = req.body as { name?: string; photoUrl?: string };
+app.post("/render", async (req, res) => {
+  // Proteção simples para garantir que apenas a Edge Function chame aqui
+  if (RAILWAY_EDGE_KEY) {
+    const incomingKey =
+      (req.headers["x-edge-key"] as string | undefined) ||
+      (req.headers["x-edgekey"] as string | undefined);
+    if (!incomingKey || incomingKey !== RAILWAY_EDGE_KEY) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+  }
 
-  if (!name || !photoUrl) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "Envie name e photoUrl." });
+  const {
+    requestId,
+    user_name,
+    media_url,
+    message_text,
+    language,
+    user_email,
+  } = req.body as {
+    requestId?: string;
+    user_name?: string;
+    media_url?: string;
+    message_text?: string;
+    language?: string;
+    user_email?: string;
+  };
+
+  if (!user_name || !media_url) {
+    return res.status(400).json({
+      ok: false,
+      error: "Envie user_name e media_url no corpo da requisição.",
+    });
   }
 
   const id = randomUUID();
@@ -440,18 +539,22 @@ app.post("/render", (req, res) => {
 
   const job: RenderJob = {
     id,
-    name,
-    photoUrl,
+    name: user_name,
+    photoUrl: media_url,
     status: "queued",
     createdAt: now,
     updatedAt: now,
+    requestId: requestId,
+    userEmail: user_email,
+    messageText: message_text,
+    language: language ?? "pt-BR",
   };
 
   jobs.set(id, job);
   queue.push(id);
   processQueue();
 
-  res.json({ ok: true, jobId: id });
+  return res.json({ ok: true, jobId: id });
 });
 
 app.get("/jobs/:id", (req, res) => {
