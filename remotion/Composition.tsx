@@ -22,11 +22,39 @@ export type NoelCompProps = {
   audioSrc?: string;
 };
 
-/* ------------ MAPA DE FRAMES ------------ */
+/* ------------ CONFIGURAÇÃO DO VÍDEO DINÂMICO (R2) ------------ */
 
-const POV_LETTER_START = 700;
-const POV_LETTER_END = 940;
-const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1;
+const DINAMICO_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-h264.mp4";
+
+/**
+ * Mapa de frames original (vídeo completo):
+ *
+ * - Entrada mágica: 0 até 689  (690 frames)
+ * - Parte dinâmica: 690 até 1150 (461 frames)
+ * - Saída mágica: 1151 até 1841 (691 frames)
+ *
+ * Trecho da carta em POV (onde aparecem nome/foto) no vídeo original:
+ *   POV_LETTER_START_GLOBAL = 700
+ *   POV_LETTER_END_GLOBAL   = 940
+ *
+ * Agora a composição do Remotion renderiza APENAS a parte dinâmica
+ * (461 frames), ou seja, refazemos o mapeamento desses frames
+ * para o novo intervalo 0..460 (local).
+ */
+
+const ENTRADA_FRAMES = 690;
+const DINAMICO_FRAMES = 461;
+// const SAIDA_FRAMES = 691; // usado apenas para referência/documentação
+
+const POV_LETTER_START_GLOBAL = 700;
+const POV_LETTER_END_GLOBAL = 940;
+
+// Converte o range global (do vídeo completo) para o range local
+// (apenas a parte dinâmica). Ex.: 700 - 690 = frame 10 do trecho dinâmico.
+const POV_LETTER_START = POV_LETTER_START_GLOBAL - ENTRADA_FRAMES; // 10
+const POV_LETTER_END = POV_LETTER_END_GLOBAL - ENTRADA_FRAMES; // 250
+const POV_LETTER_DURATION = POV_LETTER_END - POV_LETTER_START + 1; // 241
 
 /* ------------ FOTO SOBRE A CARTA ------------ */
 
@@ -76,15 +104,22 @@ const PhotoOnLetter: React.FC<{ photoUrl: string }> = ({ photoUrl }) => {
 
 /* ------------ NAME OVERLAY ------------ */
 
-const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
+type NameOverlayProps = {
+  name: string;
+};
+
+const NameOverlay: React.FC<NameOverlayProps> = ({ name }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
   const rawProgress = spring({
     frame,
     fps,
-    config: { damping: 22, stiffness: 80, mass: 1.2 },
-    durationInFrames: 70,
+    config: {
+      damping: 15,
+      mass: 0.4,
+      stiffness: 90,
+    },
   });
 
   const anticipation = interpolate(
@@ -136,13 +171,27 @@ const NameOverlay: React.FC<{ name: string }> = ({ name }) => {
   );
 };
 
-/* ------------ COMPOSIÇÃO PRINCIPAL ------------ */
+/* ------------ COMPOSIÇÃO PRINCIPAL (APENAS PARTE DINÂMICA) ------------ */
 
 export const MyComp: React.FC<NoelCompProps> = ({
   name,
   photoUrl,
   audioSrc,
 }) => {
+  const { durationInFrames } = useVideoConfig();
+
+  // Log defensivo para garantir que a duração do Composition
+  // (definida em RemotionRoot) bate com o trecho dinâmico esperado.
+  if (durationInFrames !== DINAMICO_FRAMES) {
+    console.warn(
+      "[NOEL] durationInFrames não bate com DINAMICO_FRAMES.",
+      "durationInFrames=",
+      durationInFrames,
+      "DINAMICO_FRAMES=",
+      DINAMICO_FRAMES
+    );
+  }
+
   const safeName = (name ?? "").trim() || "Amigo(a)";
   const safePhoto =
     photoUrl && photoUrl.trim() !== ""
@@ -157,16 +206,26 @@ export const MyComp: React.FC<NoelCompProps> = ({
 
   return (
     <AbsoluteFill>
-      {/* vídeo base mutado */}
-      <Video src={staticFile("videonoel-h264.mp4")} />
+      {/* VÍDEO BASE DINÂMICO (sem entrada/saída) */}
+      <Video src={DINAMICO_URL} />
 
-      {/* trecho POV (nome, foto, áudio) */}
-      <Sequence from={POV_LETTER_START} durationInFrames={POV_LETTER_DURATION}>
-        {safeAudio && <AudioLayer src={safeAudio} />}
-
+      {/* NOME + FOTO APENAS NO TRECHO DA CARTA EM POV */}
+      <Sequence
+        from={POV_LETTER_START}
+        durationInFrames={POV_LETTER_DURATION}
+      >
         <NameOverlay name={safeName} />
         <PhotoOnLetter photoUrl={safePhoto} />
       </Sequence>
+
+      {/* ÁUDIO DINÂMICO - INICIA JUNTO COM O POV DA CARTA
+          (ajuste o "from" se quiser alinhar com outro momento)
+      */}
+      {safeAudio && (
+        <Sequence from={POV_LETTER_START}>
+          <AudioLayer src={safeAudio} />
+        </Sequence>
+      )}
     </AbsoluteFill>
   );
 };

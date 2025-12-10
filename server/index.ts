@@ -8,6 +8,7 @@ import { spawn } from "child_process";
 import { bundle } from "@remotion/bundler";
 import { getCompositions, renderMedia } from "@remotion/renderer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { createClient } from "@supabase/supabase-js";
 
 /* -------------------------------------------------------------------------- */
 /*                               SETUP BÁSICO                                  */
@@ -35,7 +36,16 @@ const {
   ELEVENLABS_API_KEY,
   ELEVENLABS_VOICE_ID,
   SERVER_URL,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  RAILWAY_EDGE_KEY,
 } = process.env;
+
+// URLs das partes estáticas do vídeo Noel (no R2)
+const ENTRADA_VIDEO_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4";
+const SAIDA_VIDEO_URL =
+  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4";
 
 if (!SERVER_URL) {
   console.warn("⚠️ SERVER_URL não definido. Ex: https://meuservidor.railway.app");
@@ -105,6 +115,57 @@ const getBundledLocation = async (): Promise<string> => {
 };
 
 /* -------------------------------------------------------------------------- */
+/*                     SUPABASE (ATUALIZAÇÃO DE STATUS)                        */
+/* -------------------------------------------------------------------------- */
+
+const supabase =
+  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    : null;
+
+if (!supabase) {
+  console.warn(
+    "⚠️ SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configurados. " +
+      "Atualização de status em video_requests será ignorada.",
+  );
+}
+
+const updateVideoRequestStatus = async (
+  requestId: string | undefined,
+  status: string,
+  extra: Record<string, any> = {}
+) => {
+  if (!supabase || !requestId) return;
+
+  try {
+    const { error } = await supabase
+      .from("video_requests")
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+        ...extra,
+      })
+      .eq("id", requestId);
+
+    if (error) {
+      console.error(
+        `❌ Erro ao atualizar video_requests (${requestId}) para status ${status}:`,
+        error,
+      );
+    } else {
+      console.log(
+        `✅ video_requests (${requestId}) atualizado para status ${status}.`,
+      );
+    }
+  } catch (e) {
+    console.error(
+      `❌ Exceção ao atualizar video_requests (${requestId}) para status ${status}:`,
+      e,
+    );
+  }
+};
+
+/* -------------------------------------------------------------------------- */
 /*                       ELEVENLABS + FFMPEG (MP3 → WAV)                      */
 /* -------------------------------------------------------------------------- */
 
@@ -137,6 +198,50 @@ const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> =
 
     ff.on("error", (err) => {
       console.error("❌ Erro ao spawnar ffmpeg:", err);
+      reject(err);
+    });
+  });
+};
+
+const concatNoelVideos = (
+  jobId: string,
+  dynamicPath: string
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const finalPath = path.join(rendersDir, `render-${jobId}.mp4`);
+
+    console.log("🎬 Iniciando concatenação com ffmpeg...");
+    const ff = spawn("ffmpeg", [
+      "-y",
+      "-i",
+      ENTRADA_VIDEO_URL,
+      "-i",
+      dynamicPath,
+      "-i",
+      SAIDA_VIDEO_URL,
+      "-filter_complex",
+      "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]",
+      "-map",
+      "[outv]",
+      "-map",
+      "[outa]",
+      "-c:v",
+      "libx264",
+      "-c:a",
+      "aac",
+      finalPath,
+    ]);
+
+    ff.stderr.on("data", (d) => console.log("[ffmpeg concat]", d.toString()));
+
+    ff.on("close", (code) => {
+      console.log("🎬 ffmpeg concat saiu com código:", code);
+      if (code === 0) resolve(finalPath);
+      else reject(new Error("ffmpeg concat falhou com código " + code));
+    });
+
+    ff.on("error", (err) => {
+      console.error("❌ Erro ao spawnar ffmpeg concat:", err);
       reject(err);
     });
   });
@@ -235,6 +340,11 @@ type RenderJob = {
   updatedAt: string;
   videoUrl?: string;
   error?: string;
+  // Integração com Supabase / funil
+  requestId?: string;
+  userEmail?: string;
+  messageText?: string;
+  language?: string;
 };
 
 const jobs = new Map<string, RenderJob>();
@@ -250,6 +360,9 @@ const nowISO = (): string => new Date().toISOString();
 const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`🎬 [JOB ${job.id}] Iniciando runRenderJob...`);
 
+  // Atualiza status para "rendering" no Supabase (se requestId existir)
+  await updateVideoRequestStatus(job.requestId, "rendering");
+
   const serveUrl = await getBundledLocation();
 
   // 1) Gera o áudio dinâmico primeiro
@@ -260,6 +373,8 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
     name: job.name,
     photoUrl: job.photoUrl,
     audioSrc,
+    messageText: job.messageText,
+    language: job.language ?? "pt-BR",
   };
 
   console.log(`📦 [JOB ${job.id}] inputProps finais para renderMedia:`, inputProps);
@@ -284,29 +399,49 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
     (composition as any).defaultProps
   );
 
-  const outPath = path.join(rendersDir, `render-${job.id}.mp4`);
-  console.log(`🎞️ [JOB ${job.id}] Render saída em:`, outPath);
+  const dynamicOutPath = path.join(
+    rendersDir,
+    `render-dynamic-${job.id}.mp4`
+  );
+  console.log(`🎞️ [JOB ${job.id}] Render (apenas parte dinâmica) em:`, dynamicOutPath);
 
   await renderMedia({
     serveUrl,
     composition,
     codec: "h264",
-    outputLocation: outPath,
+    outputLocation: dynamicOutPath,
     inputProps,
     crf: 24,
-    jpegQuality: 70,
+    audioCodec: "aac",
+    pixelFormat: "yuv420p",
+    // defensivo: só mexe na concurrency se a env estiver válida
+    concurrency: process.env.REMOTION_CONCURRENCY
+      ? Number(process.env.REMOTION_CONCURRENCY)
+      : undefined,
+    // ⚠️ KEEP DISABLED FOR NOW:
+    // ffmpegOverride: ({ type, args }) => {
+    //   const preset = process.env.FFMPEG_PRESET ?? "fast";
+    //   console.log("[FFMPEG OVERRIDE]", type, "args antes:", args.join(" "));
+    //   return ["-preset", preset, ...args];
+    // },
   });
 
-  console.log(`✅ [JOB ${job.id}] Render concluído.`);
+  console.log(`✅ [JOB ${job.id}] Render dinâmico concluído.`);
+
+  // Agora faz o sanduíche: entrada (R2) + dinâmico (local) + saída (R2)
+  const finalOutPath = await concatNoelVideos(job.id, dynamicOutPath);
+  console.log(`🎬 [JOB ${job.id}] Vídeo final concatenado em:`, finalOutPath);
 
   job.status = "uploading";
   job.updatedAt = nowISO();
   jobs.set(job.id, job);
 
   const key = `renders/${job.id}.mp4`;
-  const videoUrl = await uploadToR2(outPath, key, "video/mp4");
+  const videoUrl = await uploadToR2(finalOutPath, key, "video/mp4");
 
-  fs.unlink(outPath, () => {});
+  // limpeza de arquivos temporários
+  fs.unlink(dynamicOutPath, () => {});
+  fs.unlink(finalOutPath, () => {});
   fs.unlink(path.join(rendersDir, `audio-${job.id}.mp3`), () => {});
   fs.unlink(path.join(rendersDir, `audio-${job.id}.wav`), () => {});
 
@@ -316,6 +451,11 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   jobs.set(job.id, job);
 
   console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
+
+  // Atualiza Supabase para "ready" com a URL final do vídeo
+  await updateVideoRequestStatus(job.requestId, "ready", {
+    video_url: videoUrl,
+  });
 };
 
 const processQueue = async (): Promise<void> => {
@@ -339,6 +479,11 @@ const processQueue = async (): Promise<void> => {
     job.error = e?.message ?? String(e);
     job.updatedAt = nowISO();
     jobs.set(job.id, job);
+
+    // Atualiza Supabase para "error" se tiver requestId
+    await updateVideoRequestStatus(job.requestId, "error", {
+      error_message: job.error,
+    });
   } finally {
     isProcessing = false;
     if (queue.length > 0) {
@@ -355,13 +500,38 @@ app.get("/", (_req, res) => {
   res.json({ ok: true, message: "API rodando." });
 });
 
-app.post("/render", (req, res) => {
-  const { name, photoUrl } = req.body as { name?: string; photoUrl?: string };
+app.post("/render", async (req, res) => {
+  // Proteção simples para garantir que apenas a Edge Function chame aqui
+  if (RAILWAY_EDGE_KEY) {
+    const incomingKey =
+      (req.headers["x-edge-key"] as string | undefined) ||
+      (req.headers["x-edgekey"] as string | undefined);
+    if (!incomingKey || incomingKey !== RAILWAY_EDGE_KEY) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+  }
 
-  if (!name || !photoUrl) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "Envie name e photoUrl." });
+  const {
+    requestId,
+    user_name,
+    media_url,
+    message_text,
+    language,
+    user_email,
+  } = req.body as {
+    requestId?: string;
+    user_name?: string;
+    media_url?: string;
+    message_text?: string;
+    language?: string;
+    user_email?: string;
+  };
+
+  if (!user_name || !media_url) {
+    return res.status(400).json({
+      ok: false,
+      error: "Envie user_name e media_url no corpo da requisição.",
+    });
   }
 
   const id = randomUUID();
@@ -369,18 +539,22 @@ app.post("/render", (req, res) => {
 
   const job: RenderJob = {
     id,
-    name,
-    photoUrl,
+    name: user_name,
+    photoUrl: media_url,
     status: "queued",
     createdAt: now,
     updatedAt: now,
+    requestId: requestId,
+    userEmail: user_email,
+    messageText: message_text,
+    language: language ?? "pt-BR",
   };
 
   jobs.set(id, job);
   queue.push(id);
   processQueue();
 
-  res.json({ ok: true, jobId: id });
+  return res.json({ ok: true, jobId: id });
 });
 
 app.get("/jobs/:id", (req, res) => {

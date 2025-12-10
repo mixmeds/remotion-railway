@@ -1,30 +1,20 @@
 // remotion/DistressedTextCanvas.tsx
 import React, { useEffect, useRef } from "react";
 
-type DistressedNameCanvasProps = {
+type Props = {
   text: string;
   progress: number; // 0 → 1
   width?: number;
   height?: number;
   fontSize?: number;
-  textColor?: string;
-  glowColor?: string;
-  roughness?: number;
-  wobble?: number;
-  inkBleed?: number;
 };
 
-export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
+export const DistressedNameCanvas: React.FC<Props> = ({
   text,
   progress,
   width = 900,
-  height = 220,
-  fontSize = 86,
-  textColor = "#301b05",
-  glowColor = "#f5e5b2",
-  roughness = 0.5,
-  wobble = 0.6,
-  inkBleed = 0.9,
+  height = 200,
+  fontSize = 110,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -38,87 +28,54 @@ export const DistressedNameCanvas: React.FC<DistressedNameCanvasProps> = ({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // 🔒 Garante que nunca vai NaN / infinito
-    const safeProgressRaw = Number.isFinite(progress) ? progress : 0;
-    const p = Math.min(Math.max(safeProgressRaw, 0), 1);
-
     ctx.clearRect(0, 0, width, height);
 
-    // Centraliza
-    ctx.save();
-    ctx.translate(width / 2, height / 2);
-
-    const visibleLength =
-      p <= 0 ? 0 : Math.max(1, Math.floor(text.length * p));
-    const visibleText = text.slice(0, visibleLength);
-
+    // 🔥 FONTE LINDA (troque para a que você quiser)
+    ctx.font = `${fontSize}px "Great Vibes", "Allura", "Playfair Display", serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.font = `${fontSize}px "Cinzel", "Times New Roman", serif`;
 
-    // Pequena “tremida” de caligrafia
-    const jitterX =
-      (Math.sin(p * 10) + Math.cos(p * 4)) * roughness * 4;
-    const jitterY = Math.cos(p * 7) * roughness * 3;
+    // texto pronto (nenhuma animação na forma -> SEM FLICKER)
+    ctx.fillStyle = "#2b1a0a";
+    ctx.shadowColor = "rgba(255,235,180,0.4)";
+    ctx.shadowBlur = 12;
+    ctx.fillText(text, width / 2, height / 2);
 
-    const blurAmount = (1 - p) * 4 * inkBleed;
+    // 🔥 Máscara suave estilo "escrita"
+    const revealWidth = width * progress;
 
-    // ✨ Glow suave
     ctx.save();
-    ctx.shadowColor = glowColor;
-    ctx.shadowBlur = 18 * (0.4 + p);
-    ctx.fillStyle = textColor;
-    ctx.filter = `blur(${blurAmount}px)`;
-    ctx.fillText(visibleText, jitterX, jitterY);
+    ctx.globalCompositeOperation = "destination-in";
+
+    const fade = ctx.createLinearGradient(0, 0, revealWidth, 0);
+    fade.addColorStop(0, "rgba(0,0,0,1)");
+    fade.addColorStop(0.88, "rgba(0,0,0,1)");
+    fade.addColorStop(1, "rgba(0,0,0,0)");
+
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, 0, revealWidth, height);
     ctx.restore();
 
-    // Texto principal
-    ctx.fillStyle = textColor;
-    ctx.filter = "none";
-    ctx.fillText(visibleText, jitterX, jitterY);
+    // 🔥 Respingo estático e elegante (SEM MOVIMENTO)
+    ctx.save();
+    ctx.globalAlpha = 0.25;
 
-    // 🔢 Função pseudo-random determinística (sem flicker)
-    const rand = (seed: number) => {
-      const x = Math.sin(seed * 43758.5453) * 10000;
-      return x - Math.floor(x);
-    };
+    for (let i = 0; i < 14; i++) {
+      const seed = i * 97 + text.length * 13;
+      const rand = Math.sin(seed) * 43758.5453;
+      const x = (rand % 1) * width * 0.8 + width * 0.1;
+      const y =
+        (Math.sin(seed * 2) % 1) * height * 0.6 + height * 0.2;
+      const r = ((Math.sin(seed * 3) % 1) * 2 + 1) * 1.6;
 
-    // Pequenas manchas / respingos (fixos, só “aparecem” com o progresso)
-    const dotsCount = 18;
-    for (let i = 0; i < dotsCount; i++) {
-      const t = i / dotsCount;
-      const angle = t * Math.PI * 2;
-      const radius = 40 + 60 * t;
-
-      const dotX = Math.cos(angle) * radius * (0.4 + wobble);
-      const dotY = Math.sin(angle * 1.3) * radius * 0.4;
-
-      const baseSeed = i + text.length * 17;
-      const alphaRand = rand(baseSeed);
-      const sizeRand = rand(baseSeed + 100);
-
-      const alpha = (0.25 + alphaRand * 0.35) * p;
-      const radiusDot = 1.5 + sizeRand * 1.8;
-
-      ctx.fillStyle = `rgba(64, 40, 15, ${alpha})`;
       ctx.beginPath();
-      ctx.arc(dotX, dotY, radiusDot, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(40, 25, 10, 0.45)";
+      ctx.arc(x, y, Math.abs(r), 0, Math.PI * 2);
       ctx.fill();
     }
 
     ctx.restore();
-  }, [
-    text,
-    progress,
-    width,
-    height,
-    fontSize,
-    textColor,
-    glowColor,
-    roughness,
-    wobble,
-    inkBleed,
-  ]);
+  }, [text, progress, width, height, fontSize]);
 
   return (
     <canvas
