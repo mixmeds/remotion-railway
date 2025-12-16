@@ -42,11 +42,18 @@ const {
 } = process.env;
 
 // URLs das partes estáticas do vídeo Noel (no R2)
-const ENTRADA_VIDEO_URL =
-  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4";
-const SAIDA_VIDEO_URL =
-  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4";
+const ENTRADA_VIDEO_URLS = {
+  pt: process.env.R2_INTRO_PT ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4",
+  es: process.env.R2_INTRO_ES ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-es-h264.mp4",
+} as const;
 
+const SAIDA_VIDEO_URLS = {
+  pt: process.env.R2_OUTRO_PT ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4",
+  es: process.env.R2_OUTRO_ES ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-es-h264.mp4",
+} as const;
+
+const normalizeLang = (l?: string) =>
+  (l ?? "pt-BR").toLowerCase().startsWith("es") ? "es" : "pt";
 if (!SERVER_URL) {
   console.warn("⚠️ SERVER_URL não definido. Ex: https://meuservidor.railway.app");
 }
@@ -133,18 +140,36 @@ if (!supabase) {
 const updateVideoRequestStatus = async (
   requestId: string | undefined,
   status: string,
-  extra: Record<string, any> = {}
+  opts: { error?: string; video_url?: string } = {}
 ) => {
   if (!supabase || !requestId) return;
 
+  const isUuid =
+    typeof requestId === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      requestId
+    );
+  if (!isUuid) return;
+
   try {
+    const payload: any = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Só grava "error" quando realmente for erro
+    if (status === "error" && opts.error) {
+      payload.error = opts.error;
+    }
+
+    // Salva a URL final do vídeo quando existir
+    if (opts.video_url) {
+      payload.video_url = opts.video_url;
+    }
+
     const { error } = await supabase
       .from("video_requests")
-      .update({
-        status,
-        updated_at: new Date().toISOString(),
-        ...extra,
-      })
+      .update(payload)
       .eq("id", requestId);
 
     if (error) {
@@ -169,9 +194,20 @@ const updateVideoRequestStatus = async (
 /*                       ELEVENLABS + FFMPEG (MP3 → WAV)                      */
 /* -------------------------------------------------------------------------- */
 
-const buildLine = (name: string): string => {
-  const safe = name.trim() || "meu amigo";
-  return `${safe}, você é alguém muito especial… mais do que imagina.`;
+const buildLine = (language: string | undefined, name: string, messageText?: string): string => {
+  const lang = normalizeLang(language);
+  const safeName = (name ?? "").trim() || (lang === "es" ? "mi amigo" : "meu amigo");
+  const msg = (messageText ?? "").trim();
+  if (lang === "es") {
+    // Base ES (curto e natural)
+    return msg
+      ? `${safeName}, eres alguien muy especial… más de lo que imaginas. ${msg}`
+      : `${safeName}, eres alguien muy especial… más de lo que imaginas.`;
+  }
+  // Base PT-BR
+  return msg
+    ? `${safeName}, você é alguém muito especial… mais do que imagina. ${msg}`
+    : `${safeName}, você é alguém muito especial… mais do que imagina.`;
 };
 
 const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> => {
@@ -205,20 +241,25 @@ const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> =
 
 const concatNoelVideos = (
   jobId: string,
-  dynamicPath: string
+  dynamicPath: string,
+  language?: string
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const finalPath = path.join(rendersDir, `render-${jobId}.mp4`);
 
+
+    const lang = normalizeLang(language);
+    const introUrl = ENTRADA_VIDEO_URLS[lang];
+    const outroUrl = SAIDA_VIDEO_URLS[lang];
     console.log("🎬 Iniciando concatenação com ffmpeg...");
     const ff = spawn("ffmpeg", [
       "-y",
       "-i",
-      ENTRADA_VIDEO_URL,
+      introUrl,
       "-i",
       dynamicPath,
       "-i",
-      SAIDA_VIDEO_URL,
+      outroUrl,
       "-filter_complex",
       "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]",
       "-map",
@@ -247,11 +288,16 @@ const concatNoelVideos = (
   });
 };
 
-const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
+const generateNoelAudio = async (
+  jobId: string,
+  name: string,
+  language?: string,
+  messageText?: string
+): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
   if (!ELEVENLABS_VOICE_ID) throw new Error("ELEVENLABS_VOICE_ID não configurada.");
 
-  const text = buildLine(name);
+  const text = buildLine(language, name, messageText);
   console.log("📝 Texto enviado para ElevenLabs:", text);
 
   const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128`;
@@ -366,7 +412,7 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   const serveUrl = await getBundledLocation();
 
   // 1) Gera o áudio dinâmico primeiro
-  const audioSrc = await generateNoelAudio(job.id, job.name);
+  const audioSrc = await generateNoelAudio(job.id, job.name, job.language, job.messageText);
 
   // 2) inputProps finais que VÃO direto para o MyComp
   const inputProps = {
@@ -429,7 +475,7 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`✅ [JOB ${job.id}] Render dinâmico concluído.`);
 
   // Agora faz o sanduíche: entrada (R2) + dinâmico (local) + saída (R2)
-  const finalOutPath = await concatNoelVideos(job.id, dynamicOutPath);
+  const finalOutPath = await concatNoelVideos(job.id, dynamicOutPath, job.language);
   console.log(`🎬 [JOB ${job.id}] Vídeo final concatenado em:`, finalOutPath);
 
   job.status = "uploading";
@@ -453,9 +499,8 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
 
   // Atualiza Supabase para "ready" com a URL final do vídeo
-  await updateVideoRequestStatus(job.requestId, "ready", {
-    video_url: videoUrl,
-  });
+  await updateVideoRequestStatus(job.requestId, "ready", { video_url: videoUrl,
+   });
 };
 
 const processQueue = async (): Promise<void> => {
@@ -481,9 +526,8 @@ const processQueue = async (): Promise<void> => {
     jobs.set(job.id, job);
 
     // Atualiza Supabase para "error" se tiver requestId
-    await updateVideoRequestStatus(job.requestId, "error", {
-      error_message: job.error,
-    });
+    await updateVideoRequestStatus(job.requestId, "error", { error: job.error,
+     });
   } finally {
     isProcessing = false;
     if (queue.length > 0) {

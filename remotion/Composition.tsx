@@ -20,13 +20,18 @@ export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
   audioSrc?: string;
+  language?: string; // "pt-BR" | "es" | "es-ES" etc
 };
 
 /* ------------ CONFIGURAÇÃO DO VÍDEO DINÂMICO (R2) ------------ */
 
-const DINAMICO_URL =
-  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-h264.mp4";
+const DINAMICO_URLS = {
+  pt: "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-h264.mp4",
+  es: "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-es-h264.mp4",
+} as const;
 
+const normalizeLang = (l?: string) =>
+  (l ?? "pt-BR").toLowerCase().startsWith("es") ? "es" : "pt";
 /**
  * Mapa de frames original (vídeo completo):
  *
@@ -177,6 +182,7 @@ export const MyComp: React.FC<NoelCompProps> = ({
   name,
   photoUrl,
   audioSrc,
+  language,
 }) => {
   const { durationInFrames } = useVideoConfig();
 
@@ -201,13 +207,16 @@ export const MyComp: React.FC<NoelCompProps> = ({
   const safeAudio =
     audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
 
+  const lang = normalizeLang(language);
+  const dinamicoUrl = DINAMICO_URLS[lang];
+
   console.log("🎧 [REMOTION DEBUG] audioSrc recebido em MyComp:", audioSrc);
   console.log("🎧 [REMOTION DEBUG] safeAudio normalizado:", safeAudio);
 
   return (
     <AbsoluteFill>
       {/* VÍDEO BASE DINÂMICO (sem entrada/saída) */}
-      <Video src={DINAMICO_URL} />
+      <Video src={dinamicoUrl} />
 
       {/* NOME + FOTO APENAS NO TRECHO DA CARTA EM POV */}
       <Sequence
