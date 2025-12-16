@@ -140,7 +140,7 @@ if (!supabase) {
 const updateVideoRequestStatus = async (
   requestId: string | undefined,
   status: string,
-  errorMessage?: string
+  opts: { error?: string; video_url?: string } = {}
 ) => {
   if (!supabase || !requestId) return;
 
@@ -157,8 +157,14 @@ const updateVideoRequestStatus = async (
       updated_at: new Date().toISOString(),
     };
 
-    if (errorMessage) {
-      payload.error = errorMessage;
+    // Só grava "error" quando realmente for erro
+    if (status === "error" && opts.error) {
+      payload.error = opts.error;
+    }
+
+    // Salva a URL final do vídeo quando existir
+    if (opts.video_url) {
+      payload.video_url = opts.video_url;
     }
 
     const { error } = await supabase
@@ -493,9 +499,8 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`🎉 [JOB ${job.id}] Finalizado. Vídeo em: ${videoUrl}`);
 
   // Atualiza Supabase para "ready" com a URL final do vídeo
-  await updateVideoRequestStatus(job.requestId, "ready", {
-    video_url: videoUrl,
-  });
+  await updateVideoRequestStatus(job.requestId, "ready", { video_url: videoUrl,
+   });
 };
 
 const processQueue = async (): Promise<void> => {
@@ -521,8 +526,8 @@ const processQueue = async (): Promise<void> => {
     jobs.set(job.id, job);
 
     // Atualiza Supabase para "error" se tiver requestId
-    await updateVideoRequestStatus(job.requestId, "error", job.error,
-    );
+    await updateVideoRequestStatus(job.requestId, "error", { error: job.error,
+     });
   } finally {
     isProcessing = false;
     if (queue.length > 0) {
