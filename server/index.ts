@@ -157,7 +157,7 @@ const updateVideoRequestStatus = async (
       .update({
         status,
         updated_at: new Date().toISOString(),
-        ...extra,
+        extra,
       })
       .eq("id", requestId);
 
@@ -233,11 +233,11 @@ const concatNoelVideos = (
     const ff = spawn("ffmpeg", [
       "-y",
       "-i",
-      ENTRADA_VIDEO_URL,
+      introUrl,
       "-i",
       dynamicPath,
       "-i",
-      SAIDA_VIDEO_URL,
+      outroUrl,
       "-filter_complex",
       "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]",
       "-map",
