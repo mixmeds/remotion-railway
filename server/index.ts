@@ -42,10 +42,26 @@ const {
 } = process.env;
 
 // URLs das partes estáticas do vídeo Noel (no R2)
-const ENTRADA_VIDEO_URL =
-  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4";
-const SAIDA_VIDEO_URL =
-  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4";
+const normalizeLang = (l?: string) =>
+  (l ?? "pt-BR").toLowerCase().startsWith("es") ? "es" : "pt";
+
+const ENTRADA_VIDEO_URLS = {
+  pt:
+    process.env.R2_INTRO_PT ??
+    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4",
+  es:
+    process.env.R2_INTRO_ES ??
+    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-es-h264.mp4",
+} as const;
+
+const SAIDA_VIDEO_URLS = {
+  pt:
+    process.env.R2_OUTRO_PT ??
+    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4",
+  es:
+    process.env.R2_OUTRO_ES ??
+    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-es-h264.mp4",
+} as const;
 
 if (!SERVER_URL) {
   console.warn("⚠️ SERVER_URL não definido. Ex: https://meuservidor.railway.app");
@@ -205,20 +221,25 @@ const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> =
 
 const concatNoelVideos = (
   jobId: string,
-  dynamicPath: string
+  dynamicPath: string,
+  language?: string
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
+    const lang = normalizeLang(language);
+    const introUrl = ENTRADA_VIDEO_URLS[lang];
+    const outroUrl = SAIDA_VIDEO_URLS[lang];
+
     const finalPath = path.join(rendersDir, `render-${jobId}.mp4`);
 
     console.log("🎬 Iniciando concatenação com ffmpeg...");
     const ff = spawn("ffmpeg", [
       "-y",
       "-i",
-      ENTRADA_VIDEO_URL,
+      introUrl,
       "-i",
       dynamicPath,
       "-i",
-      SAIDA_VIDEO_URL,
+      outroUrl,
       "-filter_complex",
       "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]",
       "-map",
@@ -429,7 +450,7 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   console.log(`✅ [JOB ${job.id}] Render dinâmico concluído.`);
 
   // Agora faz o sanduíche: entrada (R2) + dinâmico (local) + saída (R2)
-  const finalOutPath = await concatNoelVideos(job.id, dynamicOutPath);
+  const finalOutPath = await concatNoelVideos(job.id, dynamicOutPath, job.language);
   console.log(`🎬 [JOB ${job.id}] Vídeo final concatenado em:`, finalOutPath);
 
   job.status = "uploading";

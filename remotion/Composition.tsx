@@ -20,13 +20,19 @@ export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
   audioSrc?: string;
+  language?: string;
 };
 
 /* ------------ CONFIGURAÇÃO DO VÍDEO DINÂMICO (R2) ------------ */
 
-const DINAMICO_URL =
-  "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-h264.mp4";
+const DINAMICO_URLS = {
+  pt: "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-h264.mp4",
+  // ⚠️ Suba esse arquivo no R2 com esse nome (ou ajuste a URL)
+  es: "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-es-h264.mp4",
+} as const;
 
+const normalizeLang = (l?: string) =>
+  (l ?? "pt-BR").toLowerCase().startsWith("es") ? "es" : "pt";
 /**
  * Mapa de frames original (vídeo completo):
  *
@@ -207,7 +213,7 @@ export const MyComp: React.FC<NoelCompProps> = ({
   return (
     <AbsoluteFill>
       {/* VÍDEO BASE DINÂMICO (sem entrada/saída) */}
-      <Video src={DINAMICO_URL} />
+      <Video src={dinamicoUrl} />
 
       {/* NOME + FOTO APENAS NO TRECHO DA CARTA EM POV */}
       <Sequence
