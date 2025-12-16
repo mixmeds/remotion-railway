@@ -140,7 +140,7 @@ if (!supabase) {
 const updateVideoRequestStatus = async (
   requestId: string | undefined,
   status: string,
-  extra: Record<string, any> = {}
+  errorMessage?: string
 ) => {
   if (!supabase || !requestId) return;
 
@@ -152,13 +152,18 @@ const updateVideoRequestStatus = async (
   if (!isUuid) return;
 
   try {
+    const payload: any = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (errorMessage) {
+      payload.error = errorMessage;
+    }
+
     const { error } = await supabase
       .from("video_requests")
-      .update({
-        status,
-        updated_at: new Date().toISOString(),
-        extra,
-      })
+      .update(payload)
       .eq("id", requestId);
 
     if (error) {
@@ -516,9 +521,8 @@ const processQueue = async (): Promise<void> => {
     jobs.set(job.id, job);
 
     // Atualiza Supabase para "error" se tiver requestId
-    await updateVideoRequestStatus(job.requestId, "error", {
-      error: job.error,
-    });
+    await updateVideoRequestStatus(job.requestId, "error", job.error,
+    );
   } finally {
     isProcessing = false;
     if (queue.length > 0) {
