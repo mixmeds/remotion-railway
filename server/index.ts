@@ -42,27 +42,18 @@ const {
 } = process.env;
 
 // URLs das partes estáticas do vídeo Noel (no R2)
-const normalizeLang = (l?: string) =>
-  (l ?? "pt-BR").toLowerCase().startsWith("es") ? "es" : "pt";
-
 const ENTRADA_VIDEO_URLS = {
-  pt:
-    process.env.R2_INTRO_PT ??
-    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4",
-  es:
-    process.env.R2_INTRO_ES ??
-    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-es-h264.mp4",
+  pt: process.env.R2_INTRO_PT ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-h264.mp4",
+  es: process.env.R2_INTRO_ES ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/entrada-magica-es-h264.mp4",
 } as const;
 
 const SAIDA_VIDEO_URLS = {
-  pt:
-    process.env.R2_OUTRO_PT ??
-    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4",
-  es:
-    process.env.R2_OUTRO_ES ??
-    "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-es-h264.mp4",
+  pt: process.env.R2_OUTRO_PT ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-h264.mp4",
+  es: process.env.R2_OUTRO_ES ?? "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/saida-magica-es-h264.mp4",
 } as const;
 
+const normalizeLang = (l?: string) =>
+  (l ?? "pt-BR").toLowerCase().startsWith("es") ? "es" : "pt";
 if (!SERVER_URL) {
   console.warn("⚠️ SERVER_URL não definido. Ex: https://meuservidor.railway.app");
 }
@@ -153,6 +144,13 @@ const updateVideoRequestStatus = async (
 ) => {
   if (!supabase || !requestId) return;
 
+  const isUuid =
+    typeof requestId === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      requestId
+    );
+  if (!isUuid) return;
+
   try {
     const { error } = await supabase
       .from("video_requests")
@@ -225,21 +223,21 @@ const concatNoelVideos = (
   language?: string
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
+    const finalPath = path.join(rendersDir, `render-${jobId}.mp4`);
+
+
     const lang = normalizeLang(language);
     const introUrl = ENTRADA_VIDEO_URLS[lang];
     const outroUrl = SAIDA_VIDEO_URLS[lang];
-
-    const finalPath = path.join(rendersDir, `render-${jobId}.mp4`);
-
     console.log("🎬 Iniciando concatenação com ffmpeg...");
     const ff = spawn("ffmpeg", [
       "-y",
       "-i",
-      introUrl,
+      ENTRADA_VIDEO_URL,
       "-i",
       dynamicPath,
       "-i",
-      outroUrl,
+      SAIDA_VIDEO_URL,
       "-filter_complex",
       "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[outv][outa]",
       "-map",
@@ -503,7 +501,7 @@ const processQueue = async (): Promise<void> => {
 
     // Atualiza Supabase para "error" se tiver requestId
     await updateVideoRequestStatus(job.requestId, "error", {
-      error_message: job.error,
+      error: job.error,
     });
   } finally {
     isProcessing = false;

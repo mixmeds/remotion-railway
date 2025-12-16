@@ -20,14 +20,13 @@ export type NoelCompProps = {
   name?: string;
   photoUrl?: string;
   audioSrc?: string;
-  language?: string;
+  language?: string; // "pt-BR" | "es" | "es-ES" etc
 };
 
 /* ------------ CONFIGURAÇÃO DO VÍDEO DINÂMICO (R2) ------------ */
 
 const DINAMICO_URLS = {
   pt: "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-h264.mp4",
-  // ⚠️ Suba esse arquivo no R2 com esse nome (ou ajuste a URL)
   es: "https://pub-60278fada25346f1873f83649b338d98.r2.dev/assets/video-base-dinamico-es-h264.mp4",
 } as const;
 
@@ -183,6 +182,7 @@ export const MyComp: React.FC<NoelCompProps> = ({
   name,
   photoUrl,
   audioSrc,
+  language,
 }) => {
   const { durationInFrames } = useVideoConfig();
 
@@ -206,6 +206,9 @@ export const MyComp: React.FC<NoelCompProps> = ({
 
   const safeAudio =
     audioSrc && audioSrc.trim() !== "" ? audioSrc.trim() : undefined;
+
+  const lang = normalizeLang(language);
+  const dinamicoUrl = DINAMICO_URLS[lang];
 
   console.log("🎧 [REMOTION DEBUG] audioSrc recebido em MyComp:", audioSrc);
   console.log("🎧 [REMOTION DEBUG] safeAudio normalizado:", safeAudio);
