@@ -183,9 +183,20 @@ const updateVideoRequestStatus = async (
 /*                       ELEVENLABS + FFMPEG (MP3 → WAV)                      */
 /* -------------------------------------------------------------------------- */
 
-const buildLine = (name: string): string => {
-  const safe = name.trim() || "meu amigo";
-  return `${safe}, você é alguém muito especial… mais do que imagina.`;
+const buildLine = (language: string | undefined, name: string, messageText?: string): string => {
+  const lang = normalizeLang(language);
+  const safeName = (name ?? "").trim() || (lang === "es" ? "mi amigo" : "meu amigo");
+  const msg = (messageText ?? "").trim();
+  if (lang === "es") {
+    // Base ES (curto e natural)
+    return msg
+      ? `${safeName}, eres alguien muy especial… más de lo que imaginas. ${msg}`
+      : `${safeName}, eres alguien muy especial… más de lo que imaginas.`;
+  }
+  // Base PT-BR
+  return msg
+    ? `${safeName}, você é alguém muito especial… mais do que imagina. ${msg}`
+    : `${safeName}, você é alguém muito especial… mais do que imagina.`;
 };
 
 const convertMp3ToWav = (inputPath: string, outputPath: string): Promise<void> => {
@@ -266,11 +277,16 @@ const concatNoelVideos = (
   });
 };
 
-const generateNoelAudio = async (jobId: string, name: string): Promise<string> => {
+const generateNoelAudio = async (
+  jobId: string,
+  name: string,
+  language?: string,
+  messageText?: string
+): Promise<string> => {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY não configurada.");
   if (!ELEVENLABS_VOICE_ID) throw new Error("ELEVENLABS_VOICE_ID não configurada.");
 
-  const text = buildLine(name);
+  const text = buildLine(language, name, messageText);
   console.log("📝 Texto enviado para ElevenLabs:", text);
 
   const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128`;
@@ -385,7 +401,7 @@ const runRenderJob = async (job: RenderJob): Promise<void> => {
   const serveUrl = await getBundledLocation();
 
   // 1) Gera o áudio dinâmico primeiro
-  const audioSrc = await generateNoelAudio(job.id, job.name);
+  const audioSrc = await generateNoelAudio(job.id, job.name, job.language, job.messageText);
 
   // 2) inputProps finais que VÃO direto para o MyComp
   const inputProps = {
